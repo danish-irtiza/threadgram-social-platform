@@ -138,7 +138,19 @@ function Skeleton({ className }) {
   );
 }
 
-function FollowListModal({ isOpen, onClose, title, users, isLoading, onUserClick }) {
+function FollowListModal({
+  isOpen,
+  onClose,
+  title,
+  users,
+  isLoading,
+  onUserClick,
+  currentUserId,
+  onFollowToggle,
+  onAccept,
+  onReject,
+  loadingUserId,
+}) {
   const [searchTerm, setSearchTerm] = useState("");
 
   if (!isOpen) return null;
@@ -150,6 +162,15 @@ function FollowListModal({ isOpen, onClose, title, users, isLoading, onUserClick
     const usernameMatch = u.username?.toLowerCase().includes(term);
     return nameMatch || usernameMatch;
   });
+
+  // Priority order: accept > following > requested > followback > idle
+  const getRowState = (u) => {
+    if (u.isReceivedPendingRequest) return "accept";
+    if (u.isFollowing) return "following";
+    if (u.isRequested) return "requested";
+    if (u.isFollower) return "followback";
+    return "idle";
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -199,27 +220,85 @@ function FollowListModal({ isOpen, onClose, title, users, isLoading, onUserClick
               <Skeleton className="h-12 w-full rounded-xl" />
             </div>
           ) : filteredUsers.length > 0 ? (
-            filteredUsers.map((u) => (
-              <div
-                key={u._id}
-                onClick={() => {
-                  setSearchTerm("");
-                  onUserClick(u.username);
-                }}
-                className="flex items-center justify-between p-2 rounded-xl hover:bg-overlay cursor-pointer transition-colors"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar src={u.avatar} size={40} />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-ink truncate">{u.name || u.username}</p>
-                    <p className="text-xs text-muted truncate">@{u.username}</p>
+            filteredUsers.map((u) => {
+              const isSelf =
+                currentUserId && String(currentUserId) === String(u._id);
+              const rowState = getRowState(u);
+              const loading = String(loadingUserId || "") === String(u._id);
+
+              return (
+                <div
+                  key={u._id}
+                  className="flex items-center justify-between p-2 rounded-xl hover:bg-overlay transition-colors"
+                >
+                  <div
+                    onClick={() => {
+                      setSearchTerm("");
+                      onUserClick(u.username);
+                    }}
+                    className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                  >
+                    <Avatar src={u.avatar} size={40} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-ink truncate">
+                        {u.name || u.username}
+                      </p>
+                      <p className="text-xs text-muted truncate">
+                        @{u.username}
+                      </p>
+                    </div>
                   </div>
+                  {!isSelf && (
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      {rowState === "accept" ? (
+                        <>
+                          <FollowPill
+                            state="accept"
+                            loading={loading}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAccept && onAccept(u);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onReject && onReject(u);
+                            }}
+                            disabled={loading}
+                            className={cn(
+                              "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
+                              "bg-overlay hover:bg-overlay-hover text-ink border border-border"
+                            )}
+                          >
+                            {loading ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              "Reject"
+                            )}
+                          </button>
+                        </>
+                      ) : (
+                        <FollowPill
+                          state={rowState}
+                          loading={loading}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onFollowToggle && onFollowToggle(u);
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <p className="text-center text-xs text-muted py-8">
-              {searchTerm ? `No users matching "${searchTerm}"` : `No ${title.toLowerCase()} found.`}
+              {searchTerm
+                ? `No users matching "${searchTerm}"`
+                : `No ${title.toLowerCase()} found.`}
             </p>
           )}
         </div>
@@ -259,6 +338,8 @@ export default function ProfilePage() {
 
   const isMe = pathname === "/me" || pathname === "/me/";
   const accessToken = useSelector((s) => s.auth?.accessToken) || localStorage.getItem("accessToken");
+  const currentUser = useSelector((s) => s.auth?.user);
+  const currentUserId = currentUser?._id;
 
   const { profile, isLoading, isError, error, notFound } = useSelector(
     (s) => s.profile || {}
@@ -274,6 +355,7 @@ export default function ProfilePage() {
   const [followLoading, setFollowLoading] = useState(false);
   const [acceptLoading, setAcceptLoading] = useState(false);
   const [rejectLoading, setRejectLoading] = useState(false);
+  const [listActionLoadingUserId, setListActionLoadingUserId] = useState(null);
 
   useEffect(() => {
     const hasToken = Boolean(accessToken);
@@ -395,6 +477,21 @@ export default function ProfilePage() {
     }
   }, [dispatch, profile]);
 
+  // Derived relationship state — declared BEFORE any handlers that reference it
+  // (prevents JS Temporal Dead Zone reference error when useCallback deps read it)
+  const followState = useMemo(() => {
+    if (!profile) return "idle";
+    // Priority order: accept > following > requested > followback > idle
+    if (profile.isReceivedPendingRequest) return "accept";
+    if (profile.isFollowing) return "following";
+    if (profile.isRequested) return "requested";
+    if (profile.isFollower) return "followback";
+    return "idle";
+  }, [profile]);
+
+  const isOwner = !!profile?.isOwner;
+  const postsRestricted = !!profile?.postsRestricted;
+
   const handleFollowToggle = useCallback(async () => {
     if (!accessToken) {
       setAuthPromptOpen(true);
@@ -477,18 +574,67 @@ export default function ProfilePage() {
     console.info("[demo] open message with:", profile.username);
   }, [profile]);
 
-  const followState = useMemo(() => {
-    if (!profile) return "idle";
-    // Priority order: accept > following > requested > followback > idle
-    if (profile.isReceivedPendingRequest) return "accept";
-    if (profile.isFollowing) return "following";
-    if (profile.isRequested) return "requested";
-    if (profile.isFollower) return "followback";
-    return "idle";
-  }, [profile]);
+  // List-row action handlers for Followers / Following modal rows
+  const handleListRowFollowToggle = useCallback(
+    async (user) => {
+      if (!accessToken || !user?._id) return;
+      setListActionLoadingUserId(user._id);
+      try {
+        const result = await dispatch(
+          toggleFollowUser({
+            userId: user._id,
+            isFollowing: !!user.isFollowing,
+            isRequested: !!user.isRequested,
+          })
+        ).unwrap();
+        const viewerFollowingCount = result?.data?.data?.viewerFollowingCount;
+        if (typeof viewerFollowingCount === "number") {
+          dispatch(patchCurrentUser({ followingCount: viewerFollowingCount }));
+        }
+      } catch (err) {
+        console.error(`[ProfilePage] list follow toggle failed for ${user._id}:`, err);
+      } finally {
+        setListActionLoadingUserId(null);
+      }
+    },
+    [accessToken, dispatch]
+  );
 
-  const isOwner = !!profile?.isOwner;
-  const postsRestricted = !!profile?.postsRestricted;
+  const handleListRowAccept = useCallback(
+    async (user) => {
+      if (!accessToken || !user?._id) return;
+      setListActionLoadingUserId(user._id);
+      try {
+        const result = await dispatch(
+          acceptFollowRequest({ requesterId: user._id })
+        ).unwrap();
+        const ownerFollowerCount = result?.data?.data?.ownerFollowerCount;
+        if (typeof ownerFollowerCount === "number") {
+          dispatch(patchCurrentUser({ followerCount: ownerFollowerCount }));
+        }
+      } catch (err) {
+        console.error(`[ProfilePage] list accept failed for ${user._id}:`, err);
+      } finally {
+        setListActionLoadingUserId(null);
+      }
+    },
+    [accessToken, dispatch]
+  );
+
+  const handleListRowReject = useCallback(
+    async (user) => {
+      if (!accessToken || !user?._id) return;
+      setListActionLoadingUserId(user._id);
+      try {
+        await dispatch(rejectFollowRequest({ requesterId: user._id })).unwrap();
+      } catch (err) {
+        console.error(`[ProfilePage] list reject failed for ${user._id}:`, err);
+      } finally {
+        setListActionLoadingUserId(null);
+      }
+    },
+    [accessToken, dispatch]
+  );
 
   return (
     <div
