@@ -64,16 +64,22 @@ const buildPostsStats = (posts = []) => {
  * followers/following arrays stored on the User document.
  *
  * Relationship flags returned to the client:
- *   isOwner      – viewer is the profile owner
- *   isFollowing  – viewer has an *accepted* follow to this profile
- *   isFollower   – this profile has an *accepted* follow to the viewer
- *   isRequested  – viewer sent a *pending* follow request (private account)
+ *   isOwner                   – viewer is the profile owner
+ *   isFollowing               – viewer has an *accepted* follow to this profile
+ *   isFollower                – this profile has an *accepted* follow to the viewer
+ *   isRequested               – viewer sent a *pending* follow request (private account)
+ *   isReceivedPendingRequest  – this profile (owner) sent the VIEWER a *pending* follow request
  *
- * Frontend button logic:
- *   isOwner       → Edit Profile
- *   isFollowing   → Following  (click to unfollow)
- *   isRequested   → Requested  (click to cancel)
- *   else          → Follow
+ * Frontend button logic (for viewer):
+ *   isOwner                          → Edit Profile
+ *   isReceivedPendingRequest         → Accept (or Reject) – viewer must approve
+ *   isFollowing                      → Following  (click to unfollow)
+ *   isRequested                      → Requested  (click to cancel)
+ *   isFollower                       → Follow Back (click → follow the owner back)
+ *   else                             → Follow
+ *
+ * Priority for the above matters:
+ *   Accept > Following > Requested > Follow Back > Follow
  */
 const sanitizeProfileResponse = async (profileUserDoc, viewer) => {
   const viewerId = viewer && viewer.sub ? toObjectId(viewer.sub) : null
@@ -86,20 +92,52 @@ const sanitizeProfileResponse = async (profileUserDoc, viewer) => {
   let isFollowing = false
   let isFollower = false
   let isRequested = false
+  let isReceivedPendingRequest = false
 
   if (viewerId && !isOwner) {
-    const [viewerToOwner, ownerToViewer] = await Promise.all([
+    const [viewerToOwner, ownerToViewerAny] = await Promise.all([
+      // viewer→owner: any status (accepted OR pending)
       Follow.findOne({ follower: viewerId, following: ownerId }).select("status").lean(),
-      Follow.findOne({ follower: ownerId, following: viewerId, status: "accepted" })
-        .select("_id")
+      // owner→viewer: ANY status — need both accepted (for isFollower / follow-back) AND pending (for Accept button)
+      Follow.findOne({ follower: ownerId, following: viewerId })
+        .select("status")
         .lean(),
     ])
 
     if (viewerToOwner) {
-      if (viewerToOwner.status === "accepted") isFollowing = true
-      else if (viewerToOwner.status === "pending") isRequested = true
+      if (viewerToOwner.status === "accepted") {
+        isFollowing = true
+        isRequested = false
+      } else if (viewerToOwner.status === "pending") {
+        isFollowing = false
+        isRequested = true
+      }
     }
-    if (ownerToViewer) isFollower = true
+    if (ownerToViewerAny) {
+      if (ownerToViewerAny.status === "accepted") {
+        isFollower = true
+        isReceivedPendingRequest = false
+      } else if (ownerToViewerAny.status === "pending") {
+        isFollower = false
+        isReceivedPendingRequest = true
+      }
+    }
+
+    // Compute final UI button state
+    let uiState = "follow"
+    if (isReceivedPendingRequest) uiState = "accept"
+    else if (isFollowing) uiState = "following"
+    else if (isRequested) uiState = "requested"
+    else if (isFollower) uiState = "followback"
+
+    console.log(
+      `[sanitizeProfileResponse] viewer=${viewerId} → owner=${ownerId}` +
+      ` | viewer→owner=${viewerToOwner ? viewerToOwner.status : 'none'}` +
+      ` | owner→viewer=${ownerToViewerAny ? ownerToViewerAny.status : 'none'}` +
+      ` | isFollowing=${isFollowing} isRequested=${isRequested}` +
+      ` isFollower=${isFollower} isReceivedPendingRequest=${isReceivedPendingRequest}` +
+      ` | uiState=${uiState}`
+    )
   }
 
   // ── Counts (aggregation instead of pulling full arrays) ──────────────────
@@ -115,8 +153,15 @@ const sanitizeProfileResponse = async (profileUserDoc, viewer) => {
   // Authenticated viewer can see posts if: they own the profile, the profile is public, or they are an accepted follower
   const canSeePosts = isAuthenticated && (isOwner || !isPrivate || isFollowing)
 
+  console.log(
+    `[sanitizeProfileResponse] canSeePosts=${canSeePosts}` +
+    ` isAuthenticated=${isAuthenticated} isOwner=${isOwner}` +
+    ` isPrivate=${isPrivate} isFollowing=${isFollowing} isRequested=${isRequested}` +
+    ` followerCount=${followerCount} followingCount=${followingCount}`
+  )
+
   let allAuthorPosts = []
-  if (canSeePosts || !isAuthenticated) {
+  if (canSeePosts) {
     allAuthorPosts = await Post.find({ author: ownerId })
       .sort({ createdAt: -1 })
       .populate("author", "_id name username avatar")
@@ -150,6 +195,7 @@ const sanitizeProfileResponse = async (profileUserDoc, viewer) => {
     isFollowing,
     isFollower,
     isRequested,
+    isReceivedPendingRequest,
     posts: postsForViewer,
     postsRestricted,
     createdAt: profileUserDoc.createdAt,
@@ -197,19 +243,23 @@ const suggestUsers = async (req, res) => {
     const currentUserId = req.user && req.user.sub
     const limit = parseInt(req.query.limit, 10) || 5
 
-    const pipeline = []
+    // Build the excluded set using the Follow collection (source of truth)
+    // Exclude self + anyone the viewer already follows (accepted) or has requested (pending)
+    let excludedIds = []
     if (currentUserId) {
-      const currentUser = await User.findById(currentUserId).select("following")
-      if (!currentUser) {
-        return res.status(404).json({
-          status: "fail",
-          message: "Current user not found",
-        })
-      }
-      const excludedIds = [
-        new mongoose.Types.ObjectId(currentUserId),
-        ...(currentUser.following || []).map((x) => new mongoose.Types.ObjectId(x)),
-      ]
+      excludedIds.push(new mongoose.Types.ObjectId(currentUserId))
+
+      const existingRelationships = await Follow.find({
+        follower: currentUserId,
+      }).select("following").lean()
+
+      existingRelationships.forEach((doc) => {
+        excludedIds.push(new mongoose.Types.ObjectId(doc.following))
+      })
+    }
+
+    const pipeline = []
+    if (excludedIds.length > 0) {
       pipeline.push({ $match: { _id: { $nin: excludedIds } } })
     }
     pipeline.push(
@@ -222,18 +272,70 @@ const suggestUsers = async (req, res) => {
           avatar: 1,
           bio: 1,
           isPrivate: 1,
-          followerCount: { $size: { $ifNull: ["$followers", []] } },
         },
       }
     )
 
     const suggested = await User.aggregate(pipeline)
 
-    return res.status(200).json({
-      status: "success",
-      data: {
-        users: suggested,
-      },
+    // For each suggestion user, determine if the SUGGESTION already follows the VIEWER
+    // (needed for Follow Back button on suggestions)
+    const users = (() => {
+      if (!currentUserId || suggested.length === 0) {
+        return suggested.map((u) => ({
+          ...u,
+          isFollowing: false,
+          isRequested: false,
+          isFollower: false,
+          isReceivedPendingRequest: false,
+        }))
+      }
+
+      const suggestionIds = suggested
+        .map((u) => new mongoose.Types.ObjectId(u._id))
+
+      // ownerToViewer: suggestion follows viewer (any status)
+      const ownerToViewerRows = Follow.find({
+        follower: { $in: suggestionIds },
+        following: new mongoose.Types.ObjectId(currentUserId),
+      })
+        .select("follower status")
+        .lean()
+
+      return Promise.resolve(ownerToViewerRows).then((rows) => {
+        const ownerToViewerMap = {}
+        rows.forEach((r) => {
+          ownerToViewerMap[String(r.follower)] = r.status
+        })
+
+        return suggested.map((u) => {
+          const uidStr = String(u._id)
+          const ownerTo = ownerToViewerMap[uidStr]
+          // Viewer relationship: isFollowing/isRequested are always false here
+          // because we filtered those out above. But expose for consistency.
+          return {
+            ...u,
+            isFollowing: false,
+            isRequested: false,
+            isFollower: ownerTo === "accepted",
+            isReceivedPendingRequest: ownerTo === "pending",
+          }
+        })
+      })
+    })()
+
+    const finalUsers = Promise.resolve(users)
+
+    return finalUsers.then((resolvedUsers) => {
+      console.log(
+        `[suggestUsers] viewer=${currentUserId || 'guest'}` +
+        ` excluded=${excludedIds.length} returned=${resolvedUsers.length}`
+      )
+
+      return res.status(200).json({
+        status: "success",
+        data: { users: resolvedUsers },
+      })
     })
   } catch (error) {
     console.error("Suggested users error:", error)

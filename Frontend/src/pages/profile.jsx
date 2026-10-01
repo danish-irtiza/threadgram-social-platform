@@ -14,6 +14,8 @@ import {
   Sun,
   Bell,
   Search,
+  Loader2,
+  UserMinus,
 } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
@@ -23,6 +25,8 @@ import {
   fetchProfile,
   resetProfile,
   toggleFollowUser,
+  acceptFollowRequest,
+  rejectFollowRequest,
   fetchFollowers,
   fetchFollowing,
   fetchUserVibes,
@@ -30,6 +34,7 @@ import {
 import {
   logout as logoutThunk,
   clearAuth,
+  patchCurrentUser,
 } from "@/redux/features/auth/authSlice.js";
 import { useTheme } from "@/context/ThemeContext.jsx";
 import LeftCornerNav from "@components/navigation/LeftCornerNav.jsx";
@@ -41,32 +46,50 @@ import PostCard from "@/components/post/PostCard.jsx";
 import VibeCard from "@/components/post/VibeCard.jsx";
 import AuthPromptModal from "@/components/model/AuthPromptModal.jsx";
 
-function FollowPill({ state = "idle", onClick, className }) {
+/**
+ * FollowPill — single pill button that renders the primary relationship action.
+ * States (priority order): accept > following > requested > followback > idle
+ *
+ *   idle       → viewer has no outgoing relationship; button = "Follow"
+ *   followback → owner already follows viewer; button = "Follow Back" (viewer clicks → follow)
+ *   requested  → viewer sent pending request; button = "Requested" (click → cancel)
+ *   following  → viewer is accepted follower; button = "Following" (click → unfollow)
+ *   accept     → owner sent viewer a pending request; button = "Accept" (click → accept)
+ *                (caller should render a Reject button next to it)
+ */
+function FollowPill({ state = "idle", onClick, className, loading }) {
   const tokens = {
     idle: "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
+    followback:
+      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
     following:
       "bg-overlay hover:bg-overlay-hover text-ink border border-border",
     requested:
       "bg-overlay hover:bg-overlay-hover text-ink border border-border",
+    accept:
+      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
   };
-  const label =
-    state === "idle"
-      ? "Follow"
-      : state === "following"
-        ? "Following"
-        : "Requested";
+  const labels = {
+    idle: "Follow",
+    followback: "Follow Back",
+    following: "Following",
+    requested: "Requested",
+    accept: "Accept",
+  };
+  const label = labels[state] || labels.idle;
 
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={loading}
       className={cn(
-        "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98]",
+        "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
         tokens[state] || tokens.idle,
         className
       )}
     >
-      {label}
+      {loading ? <Loader2 size={14} className="animate-spin" /> : label}
     </button>
   );
 }
@@ -248,6 +271,9 @@ export default function ProfilePage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("profile");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [acceptLoading, setAcceptLoading] = useState(false);
+  const [rejectLoading, setRejectLoading] = useState(false);
 
   useEffect(() => {
     const hasToken = Boolean(accessToken);
@@ -369,20 +395,82 @@ export default function ProfilePage() {
     }
   }, [dispatch, profile]);
 
-  const handleFollowToggle = useCallback(() => {
+  const handleFollowToggle = useCallback(async () => {
     if (!accessToken) {
       setAuthPromptOpen(true);
       return;
     }
     if (!profile?._id) return;
-    dispatch(
-      toggleFollowUser({
-        userId: profile._id,
-        isFollowing: profile.isFollowing,
-        isRequested: profile.isRequested,
-      })
+    console.log(
+      `[ProfilePage] handleFollowToggle` +
+      ` isFollowing=${profile.isFollowing} isRequested=${profile.isRequested}` +
+      ` followState=${followState}`
     );
-  }, [accessToken, dispatch, profile]);
+    setFollowLoading(true);
+    try {
+      const result = await dispatch(
+        toggleFollowUser({
+          userId: profile._id,
+          isFollowing: profile.isFollowing,
+          isRequested: profile.isRequested,
+        })
+      ).unwrap();
+      const viewerFollowingCount = result?.data?.data?.viewerFollowingCount;
+      if (typeof viewerFollowingCount === "number") {
+        console.log(
+          `[ProfilePage] patching auth.user followingCount -> ${viewerFollowingCount}`
+        );
+        dispatch(patchCurrentUser({ followingCount: viewerFollowingCount }));
+      }
+    } catch (err) {
+      console.error("[ProfilePage] handleFollowToggle error:", err);
+    } finally {
+      setFollowLoading(false);
+    }
+  }, [accessToken, dispatch, profile, followState]);
+
+  const handleAcceptRequest = useCallback(async () => {
+    if (!accessToken) {
+      setAuthPromptOpen(true);
+      return;
+    }
+    if (!profile?._id) return;
+    console.log(`[ProfilePage] handleAcceptRequest requester=${profile._id}`);
+    setAcceptLoading(true);
+    try {
+      const result = await dispatch(
+        acceptFollowRequest({ requesterId: profile._id })
+      ).unwrap();
+      const ownerFollowerCount = result?.data?.data?.ownerFollowerCount;
+      if (typeof ownerFollowerCount === "number") {
+        console.log(
+          `[ProfilePage] patching auth.user followerCount -> ${ownerFollowerCount}`
+        );
+        dispatch(patchCurrentUser({ followerCount: ownerFollowerCount }));
+      }
+    } catch (err) {
+      console.error("[ProfilePage] handleAcceptRequest error:", err);
+    } finally {
+      setAcceptLoading(false);
+    }
+  }, [accessToken, dispatch, profile?._id]);
+
+  const handleRejectRequest = useCallback(async () => {
+    if (!accessToken) {
+      setAuthPromptOpen(true);
+      return;
+    }
+    if (!profile?._id) return;
+    console.log(`[ProfilePage] handleRejectRequest requester=${profile._id}`);
+    setRejectLoading(true);
+    try {
+      await dispatch(rejectFollowRequest({ requesterId: profile._id })).unwrap();
+    } catch (err) {
+      console.error("[ProfilePage] handleRejectRequest error:", err);
+    } finally {
+      setRejectLoading(false);
+    }
+  }, [accessToken, dispatch, profile?._id]);
 
   const handleMessage = useCallback(() => {
     if (!profile) return;
@@ -391,8 +479,11 @@ export default function ProfilePage() {
 
   const followState = useMemo(() => {
     if (!profile) return "idle";
+    // Priority order: accept > following > requested > followback > idle
+    if (profile.isReceivedPendingRequest) return "accept";
     if (profile.isFollowing) return "following";
     if (profile.isRequested) return "requested";
+    if (profile.isFollower) return "followback";
     return "idle";
   }, [profile]);
 
@@ -652,10 +743,36 @@ export default function ProfilePage() {
                     >
                       Message
                     </button>
-                    <FollowPill
-                      state={followState}
-                      onClick={handleFollowToggle}
-                    />
+                    {followState === "accept" ? (
+                      <>
+                        <FollowPill
+                          state="accept"
+                          onClick={handleAcceptRequest}
+                          loading={acceptLoading}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleRejectRequest}
+                          disabled={rejectLoading}
+                          className={cn(
+                            "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
+                            "bg-overlay hover:bg-overlay-hover text-ink border border-border"
+                          )}
+                        >
+                          {rejectLoading ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            "Reject"
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <FollowPill
+                        state={followState}
+                        onClick={handleFollowToggle}
+                        loading={followLoading}
+                      />
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -775,11 +892,38 @@ export default function ProfilePage() {
                         >
                           Message
                         </button>
-                        <FollowPill
-                          state={followState}
-                          onClick={handleFollowToggle}
-                          className="flex-1"
-                        />
+                        {followState === "accept" ? (
+                          <>
+                            <FollowPill
+                              state="accept"
+                              onClick={handleAcceptRequest}
+                              loading={acceptLoading}
+                              className="flex-1"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleRejectRequest}
+                              disabled={rejectLoading}
+                              className={cn(
+                                "h-10 shrink-0 rounded-full px-4 text-[13px] font-semibold transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
+                                "bg-overlay hover:bg-overlay-hover text-ink border border-border"
+                              )}
+                            >
+                              {rejectLoading ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                "Reject"
+                              )}
+                            </button>
+                          </>
+                        ) : (
+                          <FollowPill
+                            state={followState}
+                            onClick={handleFollowToggle}
+                            loading={followLoading}
+                            className="flex-1"
+                          />
+                        )}
                       </>
                     )}
                     {!isOwner && profile.isPrivate ? (
@@ -971,8 +1115,24 @@ export default function ProfilePage() {
                 icon={<Lock size={22} strokeWidth={2} />}
                 title="This account is private"
                 subtitle="Follow to see their posts."
-                actionLabel={isOwner ? undefined : "Follow"}
-                onAction={isOwner ? undefined : handleFollowToggle}
+                actionLabel={
+                  isOwner
+                    ? undefined
+                    : followState === "requested"
+                    ? "Requested"
+                    : followState === "followback"
+                    ? "Follow Back"
+                    : followState === "accept"
+                    ? "Accept"
+                    : "Follow"
+                }
+                onAction={
+                  isOwner
+                    ? undefined
+                    : followState === "accept"
+                    ? handleAcceptRequest
+                    : handleFollowToggle
+                }
               />
             ) : (desktopTab === "videos" || mobileTab === "videos") ? (
               vibesLoading ? (

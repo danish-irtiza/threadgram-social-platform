@@ -57,6 +57,40 @@ export const toggleFollowUser = createAsyncThunk(
   }
 )
 
+/**
+ * Accept an incoming pending follow request (viewer received it from the profile owner).
+ * Route: POST /api/follow/:requesterId/accept — viewer is the owner being followed.
+ */
+export const acceptFollowRequest = createAsyncThunk(
+  'profile/acceptFollowRequest',
+  async ({ requesterId }, { rejectWithValue }) => {
+    try {
+      const response = await api.post(`/follow/${requesterId}/accept`)
+      return { requesterId, data: response.data }
+    } catch (error) {
+      const message = error?.response?.data?.message || 'Failed to accept follow request.'
+      return rejectWithValue(message)
+    }
+  }
+)
+
+/**
+ * Reject / decline an incoming pending follow request.
+ * Route: DELETE /api/follow/:requesterId/reject — viewer is the owner being followed.
+ */
+export const rejectFollowRequest = createAsyncThunk(
+  'profile/rejectFollowRequest',
+  async ({ requesterId }, { rejectWithValue }) => {
+    try {
+      const response = await api.delete(`/follow/${requesterId}/reject`)
+      return { requesterId, data: response.data }
+    } catch (error) {
+      const message = error?.response?.data?.message || 'Failed to reject follow request.'
+      return rejectWithValue(message)
+    }
+  }
+)
+
 export const fetchFollowers = createAsyncThunk(
   'profile/fetchFollowers',
   async (userId, { rejectWithValue }) => {
@@ -216,25 +250,105 @@ const profileSlice = createSlice({
       })
       .addCase(toggleFollowUser.fulfilled, (state, action) => {
         const { isFollowing, isRequested } = action.meta.arg
+        const responseData = action.payload?.data?.data || {}
+        const newStatus = responseData.followStatus
+
+        // Counts from backend (source of truth):
+        // - viewerFollowingCount: viewer (authed user) new following count after action
+        // - targetFollowerCount: the profile owner's new follower count after action
+        const viewerFollowingCount = responseData.viewerFollowingCount
+        const targetFollowerCount = responseData.targetFollowerCount
+
         if (state.profile) {
           if (isFollowing) {
+            // Was following (accepted) → now unfollowing
+            console.log(
+              '[profileSlice] toggleFollowUser: UNFOLLOW accepted → idle' +
+              ` targetFollowerCount=${targetFollowerCount}`
+            )
             state.profile.isFollowing = false
             state.profile.isRequested = false
-            state.profile.followerCount = Math.max(0, (state.profile.followerCount || 1) - 1)
+            state.profile.followerCount =
+              typeof targetFollowerCount === 'number'
+                ? targetFollowerCount
+                : Math.max(0, (state.profile.followerCount || 1) - 1)
+            // Re-lock content if profile is private
+            if (state.profile.isPrivate) {
+              state.profile.postsRestricted = true
+              state.profile.posts = []
+            }
+            // Stash counts for auth.user update via component dispatch
+            state._viewerFollowingCount = viewerFollowingCount
           } else if (isRequested) {
+            // Was pending → now cancelling request
+            console.log('[profileSlice] toggleFollowUser: CANCEL pending → idle')
             state.profile.isRequested = false
             state.profile.isFollowing = false
+            // pending never counted so followerCount stays
+            if (state.profile.isPrivate) {
+              state.profile.postsRestricted = true
+              state.profile.posts = []
+            }
           } else {
-            const newStatus = action.payload?.data?.data?.followStatus
+            // Was idle → now following or requesting
             if (newStatus === 'accepted') {
+              console.log(
+                '[profileSlice] toggleFollowUser: FOLLOW → accepted (public/followback public)' +
+                ` targetFollowerCount=${targetFollowerCount}`
+              )
               state.profile.isFollowing = true
               state.profile.isRequested = false
-              state.profile.followerCount = (state.profile.followerCount || 0) + 1
+              state.profile.followerCount =
+                typeof targetFollowerCount === 'number'
+                  ? targetFollowerCount
+                  : (state.profile.followerCount || 0) + 1
+              // Accepted follow: content is now accessible
+              state.profile.postsRestricted = false
             } else if (newStatus === 'pending') {
+              console.log('[profileSlice] toggleFollowUser: FOLLOW → pending (private/followback private)')
               state.profile.isRequested = true
               state.profile.isFollowing = false
+              // pending request: content stays locked
+              state.profile.postsRestricted = !!state.profile.isPrivate
             }
+            state._viewerFollowingCount = viewerFollowingCount
           }
+        }
+      })
+      .addCase(acceptFollowRequest.fulfilled, (state, action) => {
+        const requesterId = action.meta.arg.requesterId
+        const responseData = action.payload?.data?.data || {}
+        const requesterFollowingCount = responseData.requesterFollowingCount
+        const ownerFollowerCount = responseData.ownerFollowerCount
+
+        console.log(
+          `[profileSlice] acceptFollowRequest: ACCEPTED requester=${requesterId}` +
+          ` ownerFollowerCount=${ownerFollowerCount} requesterFollowingCount=${requesterFollowingCount}`
+        )
+
+        if (state.profile && String(state.profile._id) === String(requesterId)) {
+          // Profile = the requester (the person whose request we just accepted)
+          // Now the requester follows viewer (accepted):
+          //   - profile.isFollower = true (profile owner is an accepted follower of viewer)
+          //   - profile.isReceivedPendingRequest = false
+          //   - profile.followingCount = requesterFollowingCount (requester's following gained 1)
+          //   - Viewer's followerCount (me) gained 1 → will patch via component dispatch
+          state.profile.isFollower = true
+          state.profile.isReceivedPendingRequest = false
+          if (typeof requesterFollowingCount === 'number') {
+            state.profile.followingCount = requesterFollowingCount
+          }
+        }
+        // Stash viewer's own followerCount so component can patch auth.user
+        state._viewerFollowerCount = ownerFollowerCount
+      })
+      .addCase(rejectFollowRequest.fulfilled, (state, action) => {
+        const requesterId = action.meta.arg.requesterId
+        console.log(`[profileSlice] rejectFollowRequest: REJECTED requester=${requesterId}`)
+
+        if (state.profile && String(state.profile._id) === String(requesterId)) {
+          state.profile.isReceivedPendingRequest = false
+          state.profile.isFollower = false
         }
       })
       .addCase(fetchFollowers.pending, (state) => {

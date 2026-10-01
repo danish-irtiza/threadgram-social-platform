@@ -191,6 +191,15 @@ const authSlice = createSlice({
         localStorage.removeItem('accessToken')
       }
     },
+    /**
+     * Patch the currently stored auth user with partial updates.
+     * Used to keep follower/following counts in sync after follow/unfollow actions.
+     */
+    patchCurrentUser: (state, action) => {
+      if (state.user && action.payload && typeof action.payload === 'object') {
+        state.user = { ...state.user, ...action.payload }
+      }
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -313,7 +322,7 @@ const authSlice = createSlice({
   },
 })
 
-export const { resetAuthState, clearAuth, setUser, setAccessTokenLocal } =
+export const { resetAuthState, clearAuth, setUser, setAccessTokenLocal, patchCurrentUser } =
   authSlice.actions
 
 export default authSlice.reducer

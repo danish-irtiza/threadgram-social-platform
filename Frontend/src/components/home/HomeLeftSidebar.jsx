@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils.js";
 import { useTheme } from "@/context/ThemeContext.jsx";
-import { logout as logoutThunk } from "@/redux/features/auth/authSlice.js";
+import { logout as logoutThunk, patchCurrentUser } from "@/redux/features/auth/authSlice.js";
 import api from "@/api/axios.js";
 import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
 import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
@@ -14,17 +14,23 @@ import darkWordmark from "@/assets/logo/thredgram-wordmark-dark-theme-removebg-p
 function FollowPill({ state = "idle", onClick, className, loading }) {
   const tokens = {
     idle: "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
+    followback:
+      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
+    accept:
+      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
     following:
       "bg-overlay hover:bg-overlay-hover text-ink border border-border",
     requested:
       "bg-overlay hover:bg-overlay-hover text-ink border border-border",
   };
-  const label =
-    state === "idle"
-      ? "Follow"
-      : state === "following"
-        ? "Following"
-        : "Requested";
+  const labels = {
+    idle: "Follow",
+    followback: "Follow Back",
+    accept: "Accept",
+    following: "Following",
+    requested: "Requested",
+  };
+  const label = labels[state] || labels.idle;
 
   return (
     <button
@@ -89,12 +95,22 @@ export default function HomeLeftSidebar({ className }) {
       setLoadingSuggestions(true);
       const res = await api.get("/users/suggest?limit=5");
       const users = res.data?.data?.users || [];
-      setSuggestedUsers(
-        users.map((u) => ({
-          ...u,
-          followState: u.isFollowing ? "following" : u.isRequested ? "requested" : "idle",
-        }))
-      );
+      const mapped = users.map((u) => {
+        // Priority order: accept > following > requested > followback > idle
+        let followState = "idle";
+        if (u.isReceivedPendingRequest) followState = "accept";
+        else if (u.isFollowing) followState = "following";
+        else if (u.isRequested) followState = "requested";
+        else if (u.isFollower) followState = "followback";
+        console.log(
+          `[Suggestions] user=${u.username}` +
+          ` isFollower=${u.isFollower} isFollowing=${u.isFollowing}` +
+          ` isRequested=${u.isRequested} isReceivedPendingRequest=${u.isReceivedPendingRequest}` +
+          ` → followState=${followState}`
+        );
+        return { ...u, followState };
+      });
+      setSuggestedUsers(mapped);
     } catch (err) {
       console.error("Error fetching suggested users:", err);
     } finally {
@@ -110,9 +126,12 @@ export default function HomeLeftSidebar({ className }) {
     const userId = user._id;
     setActionLoading((prev) => ({ ...prev, [userId]: true }));
     try {
-      if (user.followState === "idle") {
+      if (user.followState === "idle" || user.followState === "followback") {
+        // Follow / Follow Back → POST /follow/:id/follow
+        console.log(`[Suggestions] ${user.followState.toUpperCase()} -> user=${user.username}`);
         const res = await api.post(`/follow/${userId}/follow`);
         const status = res.data?.data?.followStatus;
+        const viewerFollowingCount = res.data?.data?.viewerFollowingCount;
         setSuggestedUsers((prev) =>
           prev.map((u) =>
             u._id === userId
@@ -120,16 +139,54 @@ export default function HomeLeftSidebar({ className }) {
               : u
           )
         );
+        // Patch auth.user.followingCount on accepted or even pending (viewer's outgoing side)
+        if (typeof viewerFollowingCount === "number") {
+          dispatch(patchCurrentUser({ followingCount: viewerFollowingCount }));
+        }
       } else if (user.followState === "following") {
-        await api.delete(`/follow/${userId}/unfollow`);
-        setSuggestedUsers((prev) =>
-          prev.map((u) => (u._id === userId ? { ...u, followState: "idle" } : u))
-        );
+        console.log(`[Suggestions] UNFOLLOW -> user=${user.username}`);
+        const res = await api.delete(`/follow/${userId}/unfollow`);
+        const viewerFollowingCount = res.data?.data?.viewerFollowingCount;
+        setSuggestedUsers((prev) => {
+          const target = prev.find((u) => u._id === userId);
+          const afterUnfollow = target?.isFollower ? "followback" : "idle";
+          return prev.map((u) =>
+            u._id === userId ? { ...u, followState: afterUnfollow } : u
+          );
+        });
+        if (typeof viewerFollowingCount === "number") {
+          dispatch(patchCurrentUser({ followingCount: viewerFollowingCount }));
+        }
       } else if (user.followState === "requested") {
+        console.log(`[Suggestions] CANCEL request -> user=${user.username}`);
         await api.delete(`/follow/${userId}/cancel`);
+        setSuggestedUsers((prev) => {
+          const target = prev.find((u) => u._id === userId);
+          const afterCancel = target?.isFollower ? "followback" : "idle";
+          return prev.map((u) =>
+            u._id === userId ? { ...u, followState: afterCancel } : u
+          );
+        });
+      } else if (user.followState === "accept") {
+        console.log(`[Suggestions] ACCEPT incoming request -> user=${user.username}`);
+        const res = await api.post(`/follow/${userId}/accept`);
+        const ownerFollowerCount = res.data?.data?.ownerFollowerCount;
+        // After acceptance: we (viewer) are now accepted follower of user
+        // Also, user already follows us (they sent the request), so:
+        //   user.isFollower=true (user follows us accepted)
+        //   user.isFollowing=true (we follow user, now accepted)
+        // So result followState = following (mutual)
         setSuggestedUsers((prev) =>
-          prev.map((u) => (u._id === userId ? { ...u, followState: "idle" } : u))
+          prev.map((u) =>
+            u._id === userId
+              ? { ...u, followState: "following", isFollowing: true, isReceivedPendingRequest: false }
+              : u
+          )
         );
+        if (typeof ownerFollowerCount === "number") {
+          // ownerFollowerCount = viewer's (my) new follower count
+          dispatch(patchCurrentUser({ followerCount: ownerFollowerCount }));
+        }
       }
     } catch (err) {
       console.error("Follow action failed:", err);

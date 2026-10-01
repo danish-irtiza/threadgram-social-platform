@@ -129,11 +129,14 @@ export const toggleReelFollow = createAsyncThunk(
       const followStatus = response?.data?.data?.followStatus
       const nextFollowing = followStatus === 'accepted'
       const nextRequested = followStatus === 'pending'
+      const viewerFollowingCount = response?.data?.data?.viewerFollowingCount
       return {
         reelId,
         authorId,
         isFollowing: nextFollowing,
         isFollowRequested: nextRequested,
+        viewerFollowingCount,
+        _raw: response?.data?.data,
       }
     } catch (error) {
       return rejectWithValue(error?.response?.data?.message || 'Failed to update follow status.')

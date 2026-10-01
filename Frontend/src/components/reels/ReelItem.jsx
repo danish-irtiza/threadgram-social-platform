@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import api from "@/api/axios";
 import { updateReel, toggleReelLike, toggleReelSave, toggleReelFollow, recordReelView } from "@/redux/features/reels/reelsSlice.js";
+import { acceptFollowRequest } from "@/redux/features/profile/profileSlice.js";
+import { patchCurrentUser } from "@/redux/features/auth/authSlice.js";
 
 const truncateCaption = (text, maxWords = 4) => {
   if (!text) return { short: "", full: "", needsTruncation: false };
@@ -122,16 +124,52 @@ export default function ReelItem({
   const handleFollow = async () => {
     if (isSelf || !authorId || !currentUserId) return;
     if (sending.follow) return;
+
+    // Derive state with same priority order: accept > following > requested > followback > idle
+    const isReceivedPendingRequest = !!author.isReceivedPendingRequest;
+    const isFollowing = !!author.isFollowing;
+    const isFollowRequested = !!author.isFollowRequested;
+    const isFollower = !!author.isFollower;
+    let reelFollowState = "idle";
+    if (isReceivedPendingRequest) reelFollowState = "accept";
+    else if (isFollowing) reelFollowState = "following";
+    else if (isFollowRequested) reelFollowState = "requested";
+    else if (isFollower) reelFollowState = "followback";
+
+    console.log(
+      `[ReelItem] handleFollow author=@${author?.username}` +
+      ` state=${reelFollowState}` +
+      ` isFollower=${isFollower} isFollowing=${isFollowing}` +
+      ` isRequested=${isFollowRequested} isReceivedPendingRequest=${isReceivedPendingRequest}`
+    );
+
     setSending((s) => ({ ...s, follow: true }));
     try {
-      await dispatch(
-        toggleReelFollow({
-          reelId: reel._id,
-          authorId,
-          isFollowing: !!author.isFollowing,
-          isFollowRequested: !!author.isFollowRequested,
-        })
-      ).unwrap();
+      if (reelFollowState === "accept") {
+        const result = await dispatch(
+          acceptFollowRequest({ requesterId: authorId })
+        ).unwrap();
+        const ownerFollowerCount = result?.data?.data?.ownerFollowerCount;
+        if (typeof ownerFollowerCount === "number") {
+          dispatch(patchCurrentUser({ followerCount: ownerFollowerCount }));
+        }
+      } else {
+        const result = await dispatch(
+          toggleReelFollow({
+            reelId: reel._id,
+            authorId,
+            isFollowing,
+            isFollowRequested,
+          })
+        ).unwrap();
+        // toggleReelFollow returns custom object { viewerFollowingCount, ... }
+        const viewerFollowingCount = result?.viewerFollowingCount;
+        if (typeof viewerFollowingCount === "number") {
+          dispatch(patchCurrentUser({ followingCount: viewerFollowingCount }));
+        }
+      }
+    } catch (err) {
+      console.error(`[ReelItem] handleFollow failed for author=${authorId}:`, err);
     } finally {
       setSending((s) => ({ ...s, follow: false }));
     }
@@ -247,22 +285,45 @@ export default function ReelItem({
               </div>
             )}
           </button>
-          {!isSelf && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); handleFollow(); }}
-              aria-label={author.isFollowing ? "Unfollow" : author.isFollowRequested ? "Cancel follow request" : "Follow"}
-              disabled={sending.follow}
-              className={cn(
-                "mt-1 grid h-6 w-6 place-items-center rounded-full border transition-colors cursor-pointer disabled:opacity-60",
-                author.isFollowing || author.isFollowRequested
-                  ? "bg-white text-ink border-white hover:bg-white/90"
-                  : "bg-indigo text-white border-indigo hover:bg-indigo-hover"
-              )}
-            >
-              {sending.follow ? <Loader2 size={14} className="animate-spin" /> : author.isFollowing ? <UserMinus size={14} /> : <UserPlus size={14} />}
-            </button>
-          )}
+          {!isSelf && (() => {
+            // Priority order for display styling
+            const isAcceptState = !!author.isReceivedPendingRequest;
+            const isFollowingState = !!author.isFollowing;
+            const isRequestedState = !!author.isFollowRequested;
+            const isFollowbackState =
+              !isAcceptState && !isFollowingState && !isRequestedState && !!author.isFollower;
+            // action type is initiating new follow if followback/idle
+            const initiating = isAcceptState || isFollowbackState || (!isFollowingState && !isRequestedState);
+            const ariaLabel = isAcceptState
+              ? "Accept follow request"
+              : isFollowingState
+              ? "Unfollow"
+              : isRequestedState
+              ? "Cancel follow request"
+              : isFollowbackState
+              ? "Follow back"
+              : "Follow";
+            return (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleFollow(); }}
+                aria-label={ariaLabel}
+                disabled={sending.follow}
+                className={cn(
+                  "mt-1 grid h-6 w-6 place-items-center rounded-full border transition-colors cursor-pointer disabled:opacity-60",
+                  initiating
+                    ? "bg-indigo text-white border-indigo hover:bg-indigo-hover"
+                    : "bg-white text-ink border-white hover:bg-white/90"
+                )}
+              >
+                {sending.follow
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : isFollowingState || isRequestedState
+                  ? <UserMinus size={14} />
+                  : <UserPlus size={14} />}
+              </button>
+            );
+          })()}
         </div>
 
         <div className="grid place-items-center text-white/80">
@@ -306,27 +367,40 @@ export default function ReelItem({
               </div>
             </div>
           </button>
-          {!isSelf && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); handleFollow(); }}
-              disabled={sending.follow}
-              className={cn(
-                "ml-2 shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-60 border",
-                author.isFollowing || author.isFollowRequested
-                  ? "bg-white/10 text-white border-white/20 hover:bg-white/20"
-                  : "bg-indigo text-white border-indigo hover:bg-indigo-hover"
-              )}
-            >
-              {sending.follow
-                ? "..."
-                : author.isFollowing
-                ? "Following"
-                : author.isFollowRequested
-                ? "Requested"
-                : "Follow"}
-            </button>
-          )}
+          {!isSelf && (() => {
+            const isAcceptState = !!author.isReceivedPendingRequest;
+            const isFollowingState = !!author.isFollowing;
+            const isRequestedState = !!author.isFollowRequested;
+            const isFollowbackState =
+              !isAcceptState && !isFollowingState && !isRequestedState && !!author.isFollower;
+            const isInitiating = isAcceptState || isFollowbackState || (!isFollowingState && !isRequestedState);
+            const label = sending.follow
+              ? "..."
+              : isAcceptState
+              ? "Accept"
+              : isFollowingState
+              ? "Following"
+              : isRequestedState
+              ? "Requested"
+              : isFollowbackState
+              ? "Follow Back"
+              : "Follow";
+            return (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleFollow(); }}
+                disabled={sending.follow}
+                className={cn(
+                  "ml-2 shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-60 border",
+                  isInitiating
+                    ? "bg-indigo text-white border-indigo hover:bg-indigo-hover"
+                    : "bg-white/10 text-white border-white/20 hover:bg-white/20"
+                )}
+              >
+                {label}
+              </button>
+            );
+          })()}
         </div>
 
         <button

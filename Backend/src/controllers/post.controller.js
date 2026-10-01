@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Post = require("../models/post.model");
 const User = require("../models/user.model");
+const Follow = require("../models/follow.model");
 const uploadOnCloudinary = require("../config/cloudinary");
 const { uploadVideoOnCloudinary } = require("../config/cloudinary");
 const {
@@ -854,27 +855,61 @@ const getSavedPosts = async (req, res) => {
 
 /**
  * GET /api/posts/feed
- * Get paginated feed posts (all public posts, newest first).
+ * Get paginated feed posts. Filters out posts from private accounts
+ * unless the authenticated viewer is an accepted follower.
  */
 const getFeedPosts = async (req, res) => {
   try {
+    const currentUserId = req.user && req.user.sub;
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const skip = (page - 1) * limit;
 
-    const totalPosts = await Post.countDocuments();
-
-    const posts = await Post.find()
+    // Fetch all posts with author privacy flag
+    const allPosts = await Post.find()
       .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("author", "_id name username avatar")
+      .populate("author", "_id name username avatar isPrivate")
       .populate("comment.user", "_id name username avatar")
       .populate("comment.replies.user", "_id name username avatar")
       .lean();
 
-    // Attach computed counts for each post
-    const postsWithCounts = posts.map((p) => ({
+    // Determine which private-account authors the viewer follows (accepted)
+    let accessiblePrivateAuthorIds = new Set();
+    if (currentUserId) {
+      const privateAuthorIds = [
+        ...new Set(
+          allPosts
+            .filter((p) => p.author?.isPrivate)
+            .map((p) => String(p.author._id))
+            .filter((id) => id !== String(currentUserId))
+        )
+      ];
+      if (privateAuthorIds.length > 0) {
+        const followRows = await Follow.find({
+          follower: currentUserId,
+          following: { $in: privateAuthorIds },
+          status: "accepted",
+        }).select("following").lean();
+        followRows.forEach((r) => accessiblePrivateAuthorIds.add(String(r.following)));
+      }
+    }
+
+    // Filter: keep post if:
+    //   - author is public, OR
+    //   - viewer is the author themselves, OR
+    //   - viewer is an accepted follower
+    const visiblePosts = allPosts.filter((p) => {
+      if (!p.author?.isPrivate) return true;
+      if (currentUserId && String(p.author._id) === String(currentUserId)) return true;
+      return accessiblePrivateAuthorIds.has(String(p.author._id));
+    });
+
+    const totalPosts = visiblePosts.length;
+    const paginated = visiblePosts.slice(skip, skip + limit);
+
+    console.log(`[getFeedPosts] viewer=${currentUserId} total=${totalPosts} returning ${paginated.length} on page ${page}`);
+
+    const postsWithCounts = paginated.map((p) => ({
       ...p,
       likesCount: Array.isArray(p.like) ? p.like.length : 0,
       commentsCount: Array.isArray(p.comment) ? p.comment.length : 0,
@@ -904,9 +939,11 @@ const getFeedPosts = async (req, res) => {
 /**
  * GET /api/posts/user/:userId
  * Get all posts by a specific user (newest first).
+ * Enforces privacy: private account posts are only visible to owner + accepted followers.
  */
 const getUserPosts = async (req, res) => {
   try {
+    const currentUserId = req.user && req.user.sub;
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({
@@ -915,11 +952,36 @@ const getUserPosts = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId).select("_id name username avatar");
+    const user = await User.findById(userId).select("_id name username avatar isPrivate");
     if (!user) {
       return res.status(404).json({
         status: "fail",
         message: "User not found",
+      });
+    }
+
+    // Privacy check
+    const isOwner = currentUserId && currentUserId.toString() === userId.toString();
+    let canView = !user.isPrivate || isOwner;
+    if (!canView && currentUserId) {
+      const followRecord = await Follow.findOne({
+        follower: currentUserId,
+        following: userId,
+        status: "accepted",
+      }).select("_id").lean();
+      canView = !!followRecord;
+    }
+
+    console.log(`[getUserPosts] viewer=${currentUserId} owner=${userId} isPrivate=${user.isPrivate} canView=${canView}`);
+
+    if (!canView) {
+      return res.status(200).json({
+        status: "success",
+        data: {
+          user: { _id: user._id, name: user.name, username: user.username, avatar: user.avatar },
+          posts: [],
+          restricted: true,
+        },
       });
     }
 

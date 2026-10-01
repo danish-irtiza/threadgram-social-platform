@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Vibe = require("../models/vibe.model");
 const User = require("../models/user.model");
+const Follow = require("../models/follow.model");
 const uploadOnCloudinary = require("../config/cloudinary");
 const { uploadVideoOnCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
 const {
@@ -839,11 +840,42 @@ const getUserVibes = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId).select("_id name username avatar");
+    const user = await User.findById(userId).select("_id name username avatar isPrivate");
     if (!user) {
       return res.status(404).json({
         status: "fail",
         message: "User not found",
+      });
+    }
+
+    // ── Privacy enforcement (BUG 3 fix) ─────────────────────────────────────
+    const isOwner = currentUserId && currentUserId.toString() === userId.toString();
+    let canView = !user.isPrivate || isOwner;
+
+    if (!canView && currentUserId) {
+      // Check if viewer is an accepted follower
+      const followRecord = await Follow.findOne({
+        follower: currentUserId,
+        following: userId,
+        status: "accepted",
+      }).select("_id").lean();
+      canView = !!followRecord;
+    }
+
+    console.log(
+      `[getUserVibes] viewer=${currentUserId} profileOwner=${userId}` +
+      ` isPrivate=${user.isPrivate} canView=${canView}`
+    );
+
+    if (!canView) {
+      // Return empty vibes array — do NOT expose private content
+      return res.status(200).json({
+        status: "success",
+        data: {
+          user: { _id: user._id, name: user.name, username: user.username, avatar: user.avatar },
+          vibes: [],
+          restricted: true,
+        },
       });
     }
 
@@ -1022,7 +1054,8 @@ const getReelsFeed = async (req, res) => {
     );
 
     // Also fetch current user's follow status per author in one pass
-    let followMap = {};
+    let viewerToAuthorMap = {};
+    let authorToViewerMap = {};
     if (currentUserId) {
       const authorIds = [
         ...new Set(
@@ -1033,28 +1066,41 @@ const getReelsFeed = async (req, res) => {
         ),
       ];
       if (authorIds.length) {
-        const { Follow } = require("../models/follow.model");
-        const rows = await Follow.find({
-          follower: new mongoose.Types.ObjectId(currentUserId),
-          following: { $in: authorIds },
-        })
-          .select("following status")
-          .lean();
-        rows.forEach((r) => {
-          followMap[String(r.following)] = r.status;
+        const [viewerRows, authorRows] = await Promise.all([
+          Follow.find({
+            follower: new mongoose.Types.ObjectId(currentUserId),
+            following: { $in: authorIds },
+          })
+            .select("following status")
+            .lean(),
+          Follow.find({
+            follower: { $in: authorIds },
+            following: new mongoose.Types.ObjectId(currentUserId),
+          })
+            .select("follower status")
+            .lean(),
+        ]);
+        viewerRows.forEach((r) => {
+          viewerToAuthorMap[String(r.following)] = r.status;
+        });
+        authorRows.forEach((r) => {
+          authorToViewerMap[String(r.follower)] = r.status;
         });
       }
     }
 
     const reels = formattedReels.map((r) => {
       const authorIdStr = String(r?.author?._id);
-      const status = followMap[authorIdStr];
+      const viewerTo = viewerToAuthorMap[authorIdStr];
+      const authorTo = authorToViewerMap[authorIdStr];
       return {
         ...r,
         author: {
           ...(r.author || {}),
-          isFollowing: status === "accepted",
-          isFollowRequested: status === "pending",
+          isFollowing: viewerTo === "accepted",
+          isFollowRequested: viewerTo === "pending",
+          isFollower: authorTo === "accepted",
+          isReceivedPendingRequest: authorTo === "pending",
         },
       };
     });
