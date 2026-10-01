@@ -1,0 +1,5 @@
+export { default as SignUp } from './auth/signup.jsx'
+export { default as LogIn } from './auth/login.jsx'
+export {default as ResetPassword } from './auth/resetPassword.jsx'  
+export { default as ForgetPassword } from './auth/forget-password.jsx'
+export { default as VerifyEmail } from './auth/verifyEmail.jsx'

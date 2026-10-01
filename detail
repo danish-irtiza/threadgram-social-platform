@@ -1,0 +1,15 @@
+2. Backend Par Ready Hain (Frontend Se Connect Hona Baqi Hain) (3 Routes)
+Yeh 3 routes Backend controller aur routes mein bilkul tayar aur functional hain, lekin abhi frontend se call nahi ho rahe:
+
+GET /api/posts/feed (getFeedPosts)
+
+Purpose: Main Home Feed par tamaam users ke posts paginated show karwana.
+(Note: Abhi Home Feed par demo static array use ho rahi hai).
+GET /api/posts/user/:userId (getUserPosts)
+
+Purpose: Kisi specific user ID ke posts fetch karna.
+(Note: Profile page abhi /api/users/me aur /api/users/:username endpoint se direct populated posts laa raha hai).
+GET /api/posts/saved (getSavedPosts)
+
+Purpose: User ke save/bookmark kiye huye tamaam posts fetch karna.
+(Note: Isko Settings > Saved Posts page se connect kar sakte hain).
