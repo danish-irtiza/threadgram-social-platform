@@ -109,14 +109,23 @@ export const toggleReelSave = createAsyncThunk(
     const { reels: state } = getState()
     const reel = state.reels.find((r) => String(r._id) === String(reelId))
     const prevSaved = !!reel?.isSaved
+    const prevSavesCount = reel?.savesCount || 0
     // Optimistic update — instant UI feedback
-    dispatch(updateReel({ reelId, isSaved: !prevSaved }))
+    dispatch(updateReel({
+      reelId,
+      isSaved: !prevSaved,
+      savesCount: prevSaved ? Math.max(0, prevSavesCount - 1) : prevSavesCount + 1,
+    }))
     try {
       const { data } = await api.post(`/vibes/${reelId}/save`)
-      return { reelId, isSaved: data?.isSaved ?? !prevSaved }
+      return {
+        reelId,
+        isSaved: data?.isSaved ?? !prevSaved,
+        savesCount: data?.savesCount ?? (prevSaved ? Math.max(0, prevSavesCount - 1) : prevSavesCount + 1),
+      }
     } catch (error) {
       // Revert on failure
-      dispatch(updateReel({ reelId, isSaved: prevSaved }))
+      dispatch(updateReel({ reelId, isSaved: prevSaved, savesCount: prevSavesCount }))
       return rejectWithValue(error?.response?.data?.message || 'Failed to update save.')
     }
   }
@@ -255,8 +264,8 @@ const reelsSlice = createSlice({
       })
 
       .addCase(toggleReelSave.fulfilled, (state, action) => {
-        const { reelId, isSaved } = action.payload || {}
-        updateOneReel(state, reelId, { isSaved })
+        const { reelId, isSaved, savesCount } = action.payload || {}
+        updateOneReel(state, reelId, { isSaved, savesCount })
       })
       .addCase(toggleReelSave.rejected, (state, action) => {
         state.error = action.payload || state.error

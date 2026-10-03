@@ -51,6 +51,7 @@ const formatVibe = (vibe, currentUserId) => {
     likesCount: Array.isArray(vibe.like) ? vibe.like.length : 0,
     commentsCount: Array.isArray(vibe.comment) ? vibe.comment.length : 0,
     viewsCount: Array.isArray(vibe.views) ? vibe.views.length : 0,
+    savesCount: Array.isArray(vibe.savedVibe) ? vibe.savedVibe.length : 0,
   };
 };
 
@@ -639,6 +640,7 @@ const toggleSaveVibe = async (req, res) => {
         status: "success",
         message: "Vibe removed from saved",
         isSaved: false,
+        savesCount: Math.max(0, (Array.isArray(vibe.savedVibe) ? vibe.savedVibe.length : 1) - 1),
       });
     } else {
       await Vibe.findByIdAndUpdate(vibeId, {
@@ -652,6 +654,7 @@ const toggleSaveVibe = async (req, res) => {
         status: "success",
         message: "Vibe saved successfully",
         isSaved: true,
+        savesCount: (Array.isArray(vibe.savedVibe) ? vibe.savedVibe.length : 0) + 1,
       });
     }
   } catch (error) {

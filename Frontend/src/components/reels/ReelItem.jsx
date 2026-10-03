@@ -267,7 +267,9 @@ export default function ReelItem({
           )}>
             {<Bookmark size={26} fill={reel?.isSaved ? "currentColor" : "none"} strokeWidth={2} />}
           </span>
-          <span className="sr-only">Save</span>
+          <span className="mt-0.5 text-[12px] font-medium text-white/90 drop-shadow">
+            {formatCount(reel?.savesCount ?? 0)}
+          </span>
         </button>
 
         <div className="grid place-items-center">

@@ -1,0 +1,15 @@
+.env
+.env.*
+!env.sample
+node_modules/
+.trae
+.agent
+.vscode
+*.log
+
+# Build
+dist/
+build/
+
+# Cache
+.cache/
