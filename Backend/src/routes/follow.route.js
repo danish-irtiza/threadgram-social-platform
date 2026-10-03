@@ -1,6 +1,6 @@
 const express = require("express")
 const router = express.Router()
-const { isAuth } = require("../middlewares/isAuth")
+const { isAuth, optionalAuth } = require("../middlewares/isAuth")
 const {
   sendFollowRequest,
   acceptFollowRequest,
@@ -33,7 +33,7 @@ router.delete("/:targetUserId/cancel", isAuth, cancelFollowRequest)
 router.get("/requests", isAuth, getPendingRequests)
 
 // Followers / following lists for any user
-router.get("/:userId/followers", getFollowers)
-router.get("/:userId/following", getFollowing)
+router.get("/:userId/followers", optionalAuth, getFollowers)
+router.get("/:userId/following", optionalAuth, getFollowing)
 
 module.exports = router

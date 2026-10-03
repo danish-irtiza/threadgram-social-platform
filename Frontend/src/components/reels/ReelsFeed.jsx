@@ -99,9 +99,9 @@ export default function ReelsFeed() {
 
   const handleCaptionExpand = (reelId) => setExpandedCaptionId(reelId);
 
-  const handleCommentCountChange = (reelId, count) => {
+  const handleCommentCountChange = useCallback((reelId, count) => {
     dispatch(updateReel({ reelId, commentsCount: count }));
-  };
+  }, [dispatch]);
 
   const commentsReel = useMemo(
     () => reels.find((r) => String(r._id) === String(commentsReelId)) || null,

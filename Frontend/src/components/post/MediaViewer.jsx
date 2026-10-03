@@ -106,7 +106,30 @@ export function MediaToast({ message, type = "error", onDismiss }) {
   );
 }
 
-function ReplyItem({ reply, contentId, commentId, contentAuthorId, contentType, onReplyUpdated, onReplyDeleted }) {
+function renderFormattedText(text) {
+  if (!text) return null;
+  const parts = text.split(/(@[a-zA-Z0-9_\-]+)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("@")) {
+      const username = part.slice(1);
+      return (
+        <span
+          key={index}
+          className="font-semibold text-indigo hover:underline cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.location.href = `/profile/${username}`;
+          }}
+        >
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
+}
+
+function ReplyItem({ reply, contentId, commentId, contentAuthorId, contentType, onReplyUpdated, onReplyDeleted, onReplyToUser }) {
   const config = CONTENT_CONFIG[contentType] || CONTENT_CONFIG[CONTENT_TYPE.POST];
   const currentUser = useSelector((s) => s.auth?.user);
   const currentUserId = currentUser?._id;
@@ -175,7 +198,13 @@ function ReplyItem({ reply, contentId, commentId, contentAuthorId, contentType, 
             <button onClick={() => setEditing(false)} className="text-muted hover:text-ink cursor-pointer"><X size={12} /></button>
           </div>
         ) : (
-          <p className="mt-0.5 text-[11px] leading-4 text-ink/90 break-words">{reply.text}</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-ink/90 break-words">{renderFormattedText(reply.text)}</p>
+        )}
+        {currentUserId && !editing && (
+          <button type="button" onClick={() => onReplyToUser && onReplyToUser(reply.user?.username)}
+            className="flex items-center gap-1 text-[10px] font-medium text-muted hover:text-indigo cursor-pointer transition-colors mt-0.5">
+            <CornerDownRight size={10} />Reply
+          </button>
         )}
         {err && <p className="mt-0.5 text-[10px] text-pink">{err}</p>}
       </div>
@@ -226,6 +255,17 @@ function CommentItem({ comment, contentId, contentAuthorId, contentType, onComme
       await api.delete(`${config.apiPrefix}/${contentId}/comment/${comment._id}`);
       onCommentDeleted(comment._id);
     } catch (e) { setErr(e?.response?.data?.message || "Failed to delete comment."); }
+  };
+
+  const handleReplyToUser = (targetUsername) => {
+    setShowReplies(true);
+    setReplying(true);
+    if (targetUsername) {
+      setReplyText(`@${targetUsername} `);
+    }
+    setTimeout(() => {
+      if (replyRef.current) replyRef.current.focus();
+    }, 50);
   };
 
   const handleReply = async () => {
@@ -279,14 +319,14 @@ function CommentItem({ comment, contentId, contentAuthorId, contentType, onComme
               <button onClick={() => setEditing(false)} className="text-muted hover:text-ink cursor-pointer"><X size={14} /></button>
             </div>
           ) : (
-            <p className="mt-0.5 text-[12px] leading-[1.4] text-ink/90 break-words">{comment.text}</p>
+            <p className="mt-0.5 text-[12px] leading-[1.4] text-ink/90 break-words">{renderFormattedText(comment.text)}</p>
           )}
 
           {err && <p className="mt-0.5 text-[10px] text-pink">{err}</p>}
 
           <div className="mt-1 flex items-center gap-3">
             {config.hasReplies && currentUserId && (
-              <button type="button" onClick={() => setReplying((v) => !v)}
+              <button type="button" onClick={() => handleReplyToUser(comment.user?.username)}
                 className="flex items-center gap-1 text-[10px] font-medium text-muted hover:text-indigo cursor-pointer transition-colors">
                 <CornerDownRight size={10} />Reply
               </button>
@@ -323,6 +363,7 @@ function CommentItem({ comment, contentId, contentAuthorId, contentType, onComme
             <ReplyItem key={reply._id} reply={reply} contentId={contentId} commentId={comment._id}
               contentAuthorId={contentAuthorId}
               contentType={contentType}
+              onReplyToUser={handleReplyToUser}
               onReplyUpdated={(updatedComment) => onCommentUpdated(updatedComment)}
               onReplyDeleted={(updatedComment) => onCommentUpdated(updatedComment)} />
           ))}
@@ -353,6 +394,9 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
   const commentInputRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const fetchingRef = useRef(false);
+  const totalCommentsRef = useRef(initialCount || 0);
+  const onCommentCountChangeRef = useRef(onCommentCountChange);
+  onCommentCountChangeRef.current = onCommentCountChange;
 
   const showToast = useCallback((message, type = "error") => setToast({ message, type }), []);
   const dismissToast = useCallback(() => setToast(null), []);
@@ -377,7 +421,7 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
       const { data } = await api.get(`${config.apiPrefix}/${contentId}/comments?page=${pageNum}&limit=20`);
       const resData = data.data || {};
       const newComments = resData.comments || [];
-      const total = resData.totalComments ?? totalComments;
+      const total = resData.totalComments ?? totalCommentsRef.current;
       const more = resData.hasMore ?? false;
 
       if (append) {
@@ -391,9 +435,10 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
       }
 
       setTotalComments(total);
+      totalCommentsRef.current = total;
       setHasMore(more);
       setPage(pageNum);
-      if (onCommentCountChange) onCommentCountChange(total);
+      if (onCommentCountChangeRef.current) onCommentCountChangeRef.current(total);
     } catch (err) {
       console.error("Fetch comments error:", err);
       setError(err?.response?.data?.message || "Failed to load comments.");
@@ -402,7 +447,7 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
       setLoadingMore(false);
       fetchingRef.current = false;
     }
-  }, [contentId, config.apiPrefix, totalComments, onCommentCountChange]);
+  }, [contentId, config.apiPrefix]);
 
   useEffect(() => {
     fetchComments(1, false);
@@ -431,10 +476,11 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
       const createdComment = data.data.comment;
       
       setComments((prev) => [createdComment, ...prev]);
-      const newTotal = totalComments + 1;
+      const newTotal = totalCommentsRef.current + 1;
       setTotalComments(newTotal);
+      totalCommentsRef.current = newTotal;
       setCommentText("");
-      if (onCommentCountChange) onCommentCountChange(newTotal);
+      if (onCommentCountChangeRef.current) onCommentCountChangeRef.current(newTotal);
       const updateAction = contentType === CONTENT_TYPE.VIBE ? updateVibeInProfile : updatePostInProfile;
       dispatch(updateAction({ _id: contentId, commentsCount: newTotal }));
     } catch (e) {
@@ -451,14 +497,15 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
   const handleCommentDeleted = useCallback((commentId) => {
     setComments((prev) => {
       const next = prev.filter((c) => String(c._id) !== String(commentId));
-      const newTotal = Math.max(0, totalComments - 1);
+      const newTotal = Math.max(0, totalCommentsRef.current - 1);
       setTotalComments(newTotal);
-      if (onCommentCountChange) onCommentCountChange(newTotal);
+      totalCommentsRef.current = newTotal;
+      if (onCommentCountChangeRef.current) onCommentCountChangeRef.current(newTotal);
       const updateAction = contentType === CONTENT_TYPE.VIBE ? updateVibeInProfile : updatePostInProfile;
       dispatch(updateAction({ _id: contentId, commentsCount: newTotal }));
       return next;
     });
-  }, [dispatch, contentId, totalComments, onCommentCountChange, contentType]);
+  }, [dispatch, contentId, contentType]);
 
   const authorAvatar = content?.author?.avatar;
   const authorUsername = content?.author?.username;

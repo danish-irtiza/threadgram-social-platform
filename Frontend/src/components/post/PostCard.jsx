@@ -83,8 +83,31 @@ function PostToast({ message, type = "error", onDismiss }) {
   );
 }
 
+function renderFormattedText(text) {
+  if (!text) return null;
+  const parts = text.split(/(@[a-zA-Z0-9_\-]+)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("@")) {
+      const username = part.slice(1);
+      return (
+        <span
+          key={index}
+          className="font-semibold text-indigo hover:underline cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.location.href = `/profile/${username}`;
+          }}
+        >
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
+}
+
 // ─── ReplyItem ────────────────────────────────────────────────────────────────
-function ReplyItem({ reply, postId, commentId, postAuthorId, onReplyUpdated, onReplyDeleted }) {
+function ReplyItem({ reply, postId, commentId, postAuthorId, onReplyUpdated, onReplyDeleted, onReplyToUser }) {
   const currentUser = useSelector((s) => s.auth?.user);
   const currentUserId = currentUser?._id;
   const isReplyOwner = currentUserId && reply.user?._id && String(reply.user._id) === String(currentUserId);
@@ -152,7 +175,13 @@ function ReplyItem({ reply, postId, commentId, postAuthorId, onReplyUpdated, onR
             <button onClick={() => setEditing(false)} className="text-muted hover:text-ink cursor-pointer"><X size={12} /></button>
           </div>
         ) : (
-          <p className="mt-0.5 text-[11px] leading-4 text-ink/90 break-words">{reply.text}</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-ink/90 break-words">{renderFormattedText(reply.text)}</p>
+        )}
+        {currentUserId && !editing && (
+          <button type="button" onClick={() => onReplyToUser && onReplyToUser(reply.user?.username)}
+            className="flex items-center gap-1 text-[10px] font-medium text-muted hover:text-indigo cursor-pointer transition-colors mt-0.5">
+            <CornerDownRight size={10} />Reply
+          </button>
         )}
         {err && <p className="mt-0.5 text-[10px] text-pink">{err}</p>}
       </div>
@@ -203,6 +232,17 @@ function CommentItem({ comment, postId, postAuthorId, onCommentUpdated, onCommen
       await api.delete(`/posts/${postId}/comment/${comment._id}`);
       onCommentDeleted(comment._id);
     } catch (e) { setErr(e?.response?.data?.message || "Failed to delete comment."); }
+  };
+
+  const handleReplyToUser = (targetUsername) => {
+    setShowReplies(true);
+    setReplying(true);
+    if (targetUsername) {
+      setReplyText(`@${targetUsername} `);
+    }
+    setTimeout(() => {
+      if (replyRef.current) replyRef.current.focus();
+    }, 50);
   };
 
   const handleReply = async () => {
@@ -256,14 +296,14 @@ function CommentItem({ comment, postId, postAuthorId, onCommentUpdated, onCommen
               <button onClick={() => setEditing(false)} className="text-muted hover:text-ink cursor-pointer"><X size={14} /></button>
             </div>
           ) : (
-            <p className="mt-0.5 text-[12px] leading-[1.4] text-ink/90 break-words">{comment.text}</p>
+            <p className="mt-0.5 text-[12px] leading-[1.4] text-ink/90 break-words">{renderFormattedText(comment.text)}</p>
           )}
 
           {err && <p className="mt-0.5 text-[10px] text-pink">{err}</p>}
 
           <div className="mt-1 flex items-center gap-3">
             {currentUserId && (
-              <button type="button" onClick={() => setReplying((v) => !v)}
+              <button type="button" onClick={() => handleReplyToUser(comment.user?.username)}
                 className="flex items-center gap-1 text-[10px] font-medium text-muted hover:text-indigo cursor-pointer transition-colors">
                 <CornerDownRight size={10} />Reply
               </button>
@@ -299,6 +339,7 @@ function CommentItem({ comment, postId, postAuthorId, onCommentUpdated, onCommen
           {replies.map((reply) => (
             <ReplyItem key={reply._id} reply={reply} postId={postId} commentId={comment._id}
               postAuthorId={postAuthorId}
+              onReplyToUser={handleReplyToUser}
               onReplyUpdated={(updatedComment) => onCommentUpdated(updatedComment)}
               onReplyDeleted={(updatedComment) => onCommentUpdated(updatedComment)} />
           ))}

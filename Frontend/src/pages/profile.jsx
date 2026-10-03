@@ -16,6 +16,7 @@ import {
   Search,
   Loader2,
   UserMinus,
+  ChevronDown,
 } from "lucide-react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
@@ -45,52 +46,43 @@ import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg
 import PostCard from "@/components/post/PostCard.jsx";
 import VibeCard from "@/components/post/VibeCard.jsx";
 import AuthPromptModal from "@/components/model/AuthPromptModal.jsx";
+import UnfollowConfirmModal from "@/components/model/UnfollowConfirmModal.jsx";
+import Button from "@/components/ui/Button.jsx";
 
 /**
- * FollowPill — single pill button that renders the primary relationship action.
- * States (priority order): accept > following > requested > followback > idle
- *
- *   idle       → viewer has no outgoing relationship; button = "Follow"
- *   followback → owner already follows viewer; button = "Follow Back" (viewer clicks → follow)
- *   requested  → viewer sent pending request; button = "Requested" (click → cancel)
- *   following  → viewer is accepted follower; button = "Following" (click → unfollow)
- *   accept     → owner sent viewer a pending request; button = "Accept" (click → accept)
- *                (caller should render a Reject button next to it)
+ * FollowPill — pill button using reusable Button component.
+ * States: accept | following | requested | followback | idle
  */
-function FollowPill({ state = "idle", onClick, className, loading }) {
-  const tokens = {
-    idle: "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
-    followback:
-      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
-    following:
-      "bg-overlay hover:bg-overlay-hover text-ink border border-border",
-    requested:
-      "bg-overlay hover:bg-overlay-hover text-ink border border-border",
-    accept:
-      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
+function FollowPill({ state = "idle", onClick, className, loading, size = "md" }) {
+  const variantMap = {
+    idle: "primary",
+    followback: "primary",
+    accept: "primary",
+    following: "secondary",
+    requested: "secondary",
   };
+
   const labels = {
     idle: "Follow",
     followback: "Follow Back",
+    accept: "Accept",
     following: "Following",
     requested: "Requested",
-    accept: "Accept",
   };
-  const label = labels[state] || labels.idle;
+
+  const isFollowing = state === "following";
 
   return (
-    <button
-      type="button"
+    <Button
+      variant={variantMap[state] || "primary"}
+      size={size}
       onClick={onClick}
-      disabled={loading}
-      className={cn(
-        "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
-        tokens[state] || tokens.idle,
-        className
-      )}
+      loading={loading}
+      className={className}
     >
-      {loading ? <Loader2 size={14} className="animate-spin" /> : label}
-    </button>
+      <span>{labels[state] || "Follow"}</span>
+      {isFollowing && <ChevronDown size={14} className="ml-0.5 shrink-0" />}
+    </Button>
   );
 }
 
@@ -138,6 +130,8 @@ function Skeleton({ className }) {
   );
 }
 
+
+
 function FollowListModal({
   isOpen,
   onClose,
@@ -152,6 +146,11 @@ function FollowListModal({
   loadingUserId,
 }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [confirmModal, setConfirmModal] = useState({
+    open: false,
+    user: null,
+    type: "unfollow",
+  });
 
   if (!isOpen) return null;
 
@@ -172,138 +171,166 @@ function FollowListModal({
     return "idle";
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-surface text-ink p-5 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-border">
-          <h3 className="text-base font-bold text-ink">{title}</h3>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchTerm("");
-              onClose();
-            }}
-            className="p-1 rounded-full text-muted hover:text-ink hover:bg-overlay cursor-pointer transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
+  const handlePillClick = (u, rowState) => {
+    if (rowState === "following") {
+      if (u.isPrivate) {
+        setConfirmModal({ open: true, user: u, type: "unfollow" });
+      } else {
+        onFollowToggle && onFollowToggle(u);
+      }
+    } else if (rowState === "requested") {
+      setConfirmModal({ open: true, user: u, type: "cancelRequest" });
+    } else {
+      // "idle" | "followback"
+      onFollowToggle && onFollowToggle(u);
+    }
+  };
 
-        {/* Search Input */}
-        <div className="mt-3 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder={`Search`}
-            className="w-full pl-9 pr-8 py-2 text-xs rounded-lg border border-border bg-surface-elevated text-ink placeholder:text-muted focus:outline-none focus:border-indigo transition-colors"
-          />
-          {searchTerm && (
+  const handleConfirmAction = async () => {
+    const targetUser = confirmModal.user;
+    setConfirmModal({ open: false, user: null, type: "unfollow" });
+    if (targetUser) {
+      await (onFollowToggle && onFollowToggle(targetUser));
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-surface text-ink p-5 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-border">
+            <h3 className="text-base font-bold text-ink">{title}</h3>
             <button
               type="button"
-              onClick={() => setSearchTerm("")}
-              className="absolute cursor-pointer right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"
+              onClick={() => {
+                setSearchTerm("");
+                onClose();
+              }}
+              className="p-1 rounded-full text-muted hover:text-ink hover:bg-overlay cursor-pointer transition-colors"
             >
-              <X size={14} />
+              <X size={18} />
             </button>
-          )}
-        </div>
+          </div>
 
-        {/* List Content */}
-        <div className="mt-3 max-h-[340px] overflow-y-auto space-y-2 pr-1">
-          {isLoading ? (
-            <div className="space-y-3 pt-1">
-              <Skeleton className="h-12 w-full rounded-xl" />
-              <Skeleton className="h-12 w-full rounded-xl" />
-              <Skeleton className="h-12 w-full rounded-xl" />
-            </div>
-          ) : filteredUsers.length > 0 ? (
-            filteredUsers.map((u) => {
-              const isSelf =
-                currentUserId && String(currentUserId) === String(u._id);
-              const rowState = getRowState(u);
-              const loading = String(loadingUserId || "") === String(u._id);
+          {/* Search Input */}
+          <div className="mt-3 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted pointer-events-none" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder={`Search`}
+              className="w-full pl-9 pr-8 py-2 text-xs rounded-lg border border-border bg-surface-elevated text-ink placeholder:text-muted focus:outline-none focus:border-indigo transition-colors"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm("")}
+                className="absolute cursor-pointer right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
 
-              return (
-                <div
-                  key={u._id}
-                  className="flex items-center justify-between p-2 rounded-xl hover:bg-overlay transition-colors"
-                >
+          {/* List Content */}
+          <div className="mt-3 max-h-[340px] overflow-y-auto space-y-2 pr-1">
+            {isLoading ? (
+              <div className="space-y-3 pt-1">
+                <Skeleton className="h-12 w-full rounded-xl" />
+                <Skeleton className="h-12 w-full rounded-xl" />
+                <Skeleton className="h-12 w-full rounded-xl" />
+              </div>
+            ) : filteredUsers.length > 0 ? (
+              filteredUsers.map((u) => {
+                const isSelf =
+                  currentUserId && String(currentUserId) === String(u._id);
+                const rowState = getRowState(u);
+                const loading = String(loadingUserId || "") === String(u._id);
+
+                return (
                   <div
-                    onClick={() => {
-                      setSearchTerm("");
-                      onUserClick(u.username);
-                    }}
-                    className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                    key={u._id}
+                    className="flex items-center justify-between p-2 rounded-xl hover:bg-overlay transition-colors"
                   >
-                    <Avatar src={u.avatar} size={40} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-ink truncate">
-                        {u.name || u.username}
-                      </p>
-                      <p className="text-xs text-muted truncate">
-                        @{u.username}
-                      </p>
+                    <div
+                      onClick={() => {
+                        setSearchTerm("");
+                        onClose();
+                        onUserClick(u.username);
+                      }}
+                      className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                    >
+                      <Avatar src={u.avatar} size={40} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-ink truncate">
+                          {u.name || u.username}
+                        </p>
+                        <p className="text-xs text-muted truncate">
+                          @{u.username}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  {!isSelf && (
-                    <div className="flex items-center gap-2 shrink-0 ml-2">
-                      {rowState === "accept" ? (
-                        <>
+                    {!isSelf && (
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {rowState === "accept" ? (
+                          <>
+                            <FollowPill
+                              state="accept"
+                              loading={loading}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onAccept && onAccept(u);
+                              }}
+                            />
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={loading}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onReject && onReject(u);
+                              }}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        ) : (
                           <FollowPill
-                            state="accept"
+                            state={rowState}
                             loading={loading}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onAccept && onAccept(u);
+                              handlePillClick(u, rowState);
                             }}
                           />
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onReject && onReject(u);
-                            }}
-                            disabled={loading}
-                            className={cn(
-                              "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
-                              "bg-overlay hover:bg-overlay-hover text-ink border border-border"
-                            )}
-                          >
-                            {loading ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              "Reject"
-                            )}
-                          </button>
-                        </>
-                      ) : (
-                        <FollowPill
-                          state={rowState}
-                          loading={loading}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onFollowToggle && onFollowToggle(u);
-                          }}
-                        />
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <p className="text-center text-xs text-muted py-8">
-              {searchTerm
-                ? `No users matching "${searchTerm}"`
-                : `No ${title.toLowerCase()} found.`}
-            </p>
-          )}
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-center text-xs text-muted py-8">
+                {searchTerm
+                  ? `No users matching "${searchTerm}"`
+                  : `No ${title.toLowerCase()} found.`}
+              </p>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      <UnfollowConfirmModal
+        isOpen={confirmModal.open}
+        onClose={() => setConfirmModal({ open: false, user: null, type: "unfollow" })}
+        onConfirm={handleConfirmAction}
+        user={confirmModal.user}
+        type={confirmModal.type}
+        isLoading={String(loadingUserId || "") === String(confirmModal.user?._id || "")}
+      />
+    </>
   );
 }
 
@@ -431,8 +458,8 @@ export default function ProfilePage() {
       return Number.isFinite(profile.vibeCount)
         ? profile.vibeCount
         : Number.isFinite(profile.videosCount)
-        ? profile.videosCount
-        : 0;
+          ? profile.videosCount
+          : 0;
     }
     const key = DESKTOP_TABS.find((t) => t.id === tabId)?.countKey;
     if (!key) return profile.postCount || 0;
@@ -525,6 +552,34 @@ export default function ProfilePage() {
       setFollowLoading(false);
     }
   }, [accessToken, dispatch, profile, followState]);
+
+  const [profileConfirmModal, setProfileConfirmModal] = useState({
+    open: false,
+    type: "unfollow",
+  });
+
+  const onProfileFollowButtonClick = useCallback(() => {
+    if (!accessToken) {
+      setAuthPromptOpen(true);
+      return;
+    }
+    if (followState === "following") {
+      if (profile?.isPrivate) {
+        setProfileConfirmModal({ open: true, type: "unfollow" });
+      } else {
+        handleFollowToggle();
+      }
+    } else if (followState === "requested") {
+      setProfileConfirmModal({ open: true, type: "cancelRequest" });
+    } else {
+      handleFollowToggle();
+    }
+  }, [accessToken, followState, handleFollowToggle, profile?.isPrivate]);
+
+  const handleConfirmProfileUnfollow = useCallback(async () => {
+    setProfileConfirmModal((prev) => ({ ...prev, open: false }));
+    await handleFollowToggle();
+  }, [handleFollowToggle]);
 
   const handleAcceptRequest = useCallback(async () => {
     if (!accessToken) {
@@ -654,7 +709,9 @@ export default function ProfilePage() {
           }
           setActiveNav(id);
           if (id === "home") navigate("/", { replace: false });
-          if (id === "profile") navigate("/me", { replace: false });
+          else if (id === "reels") navigate("/reels", { replace: false });
+          else if (id === "search") navigate("/search", { replace: false });
+          else if (id === "profile") navigate("/me", { replace: false });
         }}
       />
 
@@ -860,35 +917,27 @@ export default function ProfilePage() {
 
               <div className="pt-2 flex flex-col items-end gap-3 min-w-[180px]">
                 {isLoading ? (
-                  <Skeleton className="h-10 w-40 rounded-full" />
+                  <Skeleton className="h-10 w-40 rounded-xl" />
                 ) : isOwner ? (
-                  <div className="flex items-center  gap-2">
-                    <button
-                      type="button"
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="md"
                       onClick={handleOpenSettings}
-                      className={cn(
-                        "h-10 rounded-full px-5 cursor-pointer text-[14px] font-semibold transition-all duration-120 ease-out active:scale-[0.98]",
-                        "border border-border bg-overlay hover:bg-overlay-hover text-ink flex items-center gap-2 shadow-sm"
-                      )}
                     >
-                      <SettingsIcon size={17} strokeWidth={2} />
+                      <SettingsIcon size={16} strokeWidth={2} />
                       <span>Settings</span>
-                    </button>
+                    </Button>
                   </div>
                 ) : profile ? (
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
+                    <Button
+                      variant="primary"
+                      size="md"
                       onClick={handleMessage}
-                      className={cn(
-                        "h-10 rounded-full px-5 text-[14px] font-semibold text-white transition-all duration-120 ease-out active:scale-[0.98] shadow-[0_6px_16px_-6px_rgba(107,91,255,0.5)]"
-                      )}
-                      style={{
-                        backgroundColor: colors.indigo.DEFAULT,
-                      }}
                     >
                       Message
-                    </button>
+                    </Button>
                     {followState === "accept" ? (
                       <>
                         <FollowPill
@@ -896,26 +945,19 @@ export default function ProfilePage() {
                           onClick={handleAcceptRequest}
                           loading={acceptLoading}
                         />
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="md"
                           onClick={handleRejectRequest}
-                          disabled={rejectLoading}
-                          className={cn(
-                            "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
-                            "bg-overlay hover:bg-overlay-hover text-ink border border-border"
-                          )}
+                          loading={rejectLoading}
                         >
-                          {rejectLoading ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            "Reject"
-                          )}
-                        </button>
+                          Reject
+                        </Button>
                       </>
                     ) : (
                       <FollowPill
                         state={followState}
-                        onClick={handleFollowToggle}
+                        onClick={onProfileFollowButtonClick}
                         loading={followLoading}
                       />
                     )}
@@ -950,18 +992,16 @@ export default function ProfilePage() {
                   />
                   <div className="flex-1 min-w-0 pt-1 grid grid-cols-3 gap-2 text-center">
                     {[
-                      { k: "postCount", label: "Posts" },
-                      { k: "followerCount", label: "Followers" },
-                      { k: "followingCount", label: "Following" },
-                    ].map(({ k, label }) => (
+                      { k: "postCount", label: "Posts", onClick: () => setMobileTab("posts") },
+                      { k: "followerCount", label: "Followers", onClick: () => handleOpenFollowModal("followers") },
+                      { k: "followingCount", label: "Following", onClick: () => handleOpenFollowModal("following") },
+                    ].map(({ k, label, onClick }) => (
                       <button
                         key={k}
                         type="button"
-                        onClick={() =>
-                          console.info(`[demo] open ${label} list`)
-                        }
+                        onClick={onClick}
                         className={cn(
-                          "rounded-xl border border-border bg-surface/60 py-2 transition-all duration-120 ease-out hover:bg-overlay active:scale-[0.98]"
+                          "rounded-xl border border-border bg-surface/60 py-2 transition-all duration-120 ease-out hover:bg-overlay active:scale-[0.98] cursor-pointer"
                         )}
                       >
                         <div
@@ -1013,31 +1053,25 @@ export default function ProfilePage() {
                   ) : null}
                   <div className="mt-4 flex items-center gap-2">
                     {isOwner ? (
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="md"
                         onClick={handleOpenSettings}
-                        className={cn(
-                          "h-10 flex-1 rounded-full px-4 text-[14px] font-semibold border border-border bg-overlay hover:bg-overlay-hover text-ink transition-all duration-120 ease-out active:scale-[0.98] flex items-center justify-center gap-2"
-                        )}
+                        className="flex-1"
                       >
                         <SettingsIcon size={16} strokeWidth={2} />
                         <span>Settings</span>
-                      </button>
+                      </Button>
                     ) : (
                       <>
-                        <button
-                          type="button"
+                        <Button
+                          variant="primary"
+                          size="md"
                           onClick={handleMessage}
-                          className={cn(
-                            "h-10 flex-1 rounded-full px-4 text-[14px] font-semibold text-white transition-all duration-120 ease-out active:scale-[0.98]"
-                          )}
-                          style={{
-                            backgroundColor: colors.indigo.DEFAULT,
-                            boxShadow: shadow.button,
-                          }}
+                          className="flex-1"
                         >
                           Message
-                        </button>
+                        </Button>
                         {followState === "accept" ? (
                           <>
                             <FollowPill
@@ -1046,26 +1080,20 @@ export default function ProfilePage() {
                               loading={acceptLoading}
                               className="flex-1"
                             />
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="md"
                               onClick={handleRejectRequest}
-                              disabled={rejectLoading}
-                              className={cn(
-                                "h-10 shrink-0 rounded-full px-4 text-[13px] font-semibold transition-all duration-120 ease-out active:scale-[0.98] inline-flex items-center justify-center gap-1.5 disabled:opacity-60",
-                                "bg-overlay hover:bg-overlay-hover text-ink border border-border"
-                              )}
+                              loading={rejectLoading}
+                              className="shrink-0"
                             >
-                              {rejectLoading ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                "Reject"
-                              )}
-                            </button>
+                              Reject
+                            </Button>
                           </>
                         ) : (
                           <FollowPill
                             state={followState}
-                            onClick={handleFollowToggle}
+                            onClick={onProfileFollowButtonClick}
                             loading={followLoading}
                             className="flex-1"
                           />
@@ -1074,7 +1102,7 @@ export default function ProfilePage() {
                     )}
                     {!isOwner && profile.isPrivate ? (
                       <span
-                        className="grid h-10 w-10 place-items-center rounded-full border border-border text-muted bg-surface/70"
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border text-muted bg-surface/70"
                         title="Private account"
                       >
                         <Lock size={16} />
@@ -1169,40 +1197,7 @@ export default function ProfilePage() {
 
           {/* Content */}
           <div className="mt-6 lg:mt-8">
-            {/* Vibes tab (Videos) — fetched separately from /api/vibes/user/:id */}
-            {desktopTab === "videos" ? (
-              vibesLoading ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-3.5">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="rounded-xl overflow-hidden border border-border bg-surface/40">
-                      <Skeleton className="h-[280px] w-full rounded-none" />
-                      <Skeleton className="mx-3 my-3 h-8 rounded-full w-32" />
-                    </div>
-                  ))}
-                </div>
-              ) : Array.isArray(vibes) && vibes.length > 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-3.5">
-                  {vibes.map((vibe, idx) => (
-                    <VibeCard
-                      key={String(vibe?._id || Math.random())}
-                      vibe={vibe}
-                      vibesList={vibes}
-                      vibeIndex={idx}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <EmptyState
-                  icon={<Film size={22} strokeWidth={2} />}
-                  title="No Vibes yet"
-                  subtitle={
-                    isOwner
-                      ? "Share your first short video vibe."
-                      : `${profile?.name || "This user"} hasn't posted any vibes yet.`
-                  }
-                />
-              )
-            ) : isLoading ? (
+            {isLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="rounded-xl overflow-hidden border border-border bg-surface/40">
@@ -1265,19 +1260,19 @@ export default function ProfilePage() {
                   isOwner
                     ? undefined
                     : followState === "requested"
-                    ? "Requested"
-                    : followState === "followback"
-                    ? "Follow Back"
-                    : followState === "accept"
-                    ? "Accept"
-                    : "Follow"
+                      ? "Requested"
+                      : followState === "followback"
+                        ? "Follow Back"
+                        : followState === "accept"
+                          ? "Accept"
+                          : "Follow"
                 }
                 onAction={
                   isOwner
                     ? undefined
                     : followState === "accept"
-                    ? handleAcceptRequest
-                    : handleFollowToggle
+                      ? handleAcceptRequest
+                      : handleFollowToggle
                 }
               />
             ) : (desktopTab === "videos" || mobileTab === "videos") ? (
@@ -1464,10 +1459,25 @@ export default function ProfilePage() {
         title={followModal.type === "followers" ? "Followers" : "Following"}
         users={followModal.type === "followers" ? followersList : followingList}
         isLoading={isListLoading}
+        currentUserId={currentUserId}
+        onFollowToggle={handleListRowFollowToggle}
+        onAccept={handleListRowAccept}
+        onReject={handleListRowReject}
+        loadingUserId={listActionLoadingUserId}
         onUserClick={(uname) => {
           setFollowModal({ open: false, type: "followers" });
           navigate(`/${encodeURIComponent(uname)}`);
         }}
+      />
+
+      {/* Profile Unfollow / Cancel Confirmation Modal */}
+      <UnfollowConfirmModal
+        isOpen={profileConfirmModal.open}
+        onClose={() => setProfileConfirmModal((prev) => ({ ...prev, open: false }))}
+        onConfirm={handleConfirmProfileUnfollow}
+        user={profile}
+        type={profileConfirmModal.type}
+        isLoading={followLoading}
       />
 
       {/* Auth Prompt Modal (for unauthenticated guests) */}

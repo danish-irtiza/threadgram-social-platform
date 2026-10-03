@@ -1,4 +1,27 @@
 const { z } = require("zod")
+const normalizeUsername = require("../utils/normalizeUsername")
+
+/**
+ * Shared username Zod schema.
+ * Transform runs first (spaces→_, lowercase, strip invalid chars),
+ * then validation checks the normalised result.
+ */
+const usernameField = (opts = {}) => {
+  let field = z
+    .string(opts.required ? { required_error: "Username is required" } : {})
+    .transform((v) => normalizeUsername(v))          // ← normalize first
+    .pipe(                                           // ← then validate normalised value
+      z.string()
+        .min(3, "Username must be at least 3 characters")
+        .max(30, "Username cannot be more than 30 characters")
+        .regex(
+          /^[a-z0-9_\-]+$/,
+          "Username can only contain lowercase letters, numbers, underscores, and hyphens"
+        )
+    )
+  if (opts.optional) field = field.optional()
+  return field
+}
 
 const registerSchema = z.object({
   name: z
@@ -7,16 +30,7 @@ const registerSchema = z.object({
     .max(50, "Name cannot be more than 50 characters")
     .trim(),
 
-  username: z
-    .string({ required_error: "Username is required" })
-    .min(3, "Username must be at least 3 characters")
-    .max(30, "Username cannot be more than 30 characters")
-    .regex(
-      /^[a-zA-Z0-9_]+$/,
-      "Username can only contain letters, numbers, and underscores"
-    )
-    .trim()
-    .toLowerCase(),
+  username: usernameField({ required: true }),
 
   email: z
     .string({ required_error: "Email is required" })
@@ -51,17 +65,7 @@ const editProfileSchema = z
       .max(50, "Name cannot be more than 50 characters")
       .trim()
       .optional(),
-    username: z
-      .string()
-      .min(3, "Username must be at least 3 characters")
-      .max(30, "Username cannot be more than 30 characters")
-      .regex(
-        /^[a-zA-Z0-9_]+$/,
-        "Username can only contain letters, numbers, and underscores"
-      )
-      .trim()
-      .toLowerCase()
-      .optional(),
+    username: usernameField({ optional: true }),
     bio: z
       .string()
       .max(150, "Bio cannot be more than 150 characters")

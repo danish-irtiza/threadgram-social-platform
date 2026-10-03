@@ -234,7 +234,7 @@ export default function ReelItem({
             "grid h-12 w-12 place-items-center rounded-full transition-colors",
             reel?.isLiked ? "text-rose-500" : "text-white group-hover:text-rose-400"
           )}>
-            {sending.like ? <Loader2 size={26} className="animate-spin" /> : <Heart size={26} fill={reel?.isLiked ? "currentColor" : "none"} strokeWidth={2} />}
+            {<Heart size={26} fill={reel?.isLiked ? "currentColor" : "none"} strokeWidth={2} />}
           </span>
           <span className="mt-0.5 text-[12px] font-medium text-white/90 drop-shadow">
             {formatCount(reel?.likesCount ?? 0)}
@@ -265,7 +265,7 @@ export default function ReelItem({
             "grid h-12 w-12 place-items-center rounded-full transition-colors",
             reel?.isSaved ? "text-amber-400" : "text-white group-hover:text-amber-300"
           )}>
-            {sending.save ? <Loader2 size={26} className="animate-spin" /> : <Bookmark size={26} fill={reel?.isSaved ? "currentColor" : "none"} strokeWidth={2} />}
+            {<Bookmark size={26} fill={reel?.isSaved ? "currentColor" : "none"} strokeWidth={2} />}
           </span>
           <span className="sr-only">Save</span>
         </button>

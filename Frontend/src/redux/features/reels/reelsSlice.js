@@ -73,24 +73,28 @@ export const recordReelView = createAsyncThunk(
  */
 export const toggleReelLike = createAsyncThunk(
   'reels/toggleReelLike',
-  async (reelId, { rejectWithValue, getState }) => {
+  async (reelId, { rejectWithValue, getState, dispatch }) => {
+    const { reels: state } = getState()
+    const reel = state.reels.find((r) => String(r._id) === String(reelId))
+    const prevLiked = !!reel?.isLiked
+    const prevCount = reel?.likesCount || 0
+    const optimistic = {
+      reelId,
+      isLiked: !prevLiked,
+      likesCount: prevLiked ? Math.max(0, prevCount - 1) : prevCount + 1,
+    }
+    // Optimistic update — instant UI feedback
+    dispatch(updateReel(optimistic))
     try {
-      const { reels: state } = getState()
-      const reel = state.reels.find((r) => String(r._id) === String(reelId))
-      const prevLiked = !!reel?.isLiked
-      const prevCount = reel?.likesCount || 0
-      const optimistic = {
-        reelId,
-        isLiked: !prevLiked,
-        likesCount: prevLiked ? Math.max(0, prevCount - 1) : prevCount + 1,
-      }
       const { data } = await api.post(`/vibes/${reelId}/like`)
       return {
         reelId,
-        isLiked: !!data?.data?.isLiked,
-        likesCount: data?.data?.likesCount ?? optimistic.likesCount,
+        isLiked: data?.isLiked ?? optimistic.isLiked,
+        likesCount: data?.likesCount ?? optimistic.likesCount,
       }
     } catch (error) {
+      // Revert on failure
+      dispatch(updateReel({ reelId, isLiked: prevLiked, likesCount: prevCount }))
       return rejectWithValue(error?.response?.data?.message || 'Failed to update like.')
     }
   }
@@ -101,11 +105,18 @@ export const toggleReelLike = createAsyncThunk(
  */
 export const toggleReelSave = createAsyncThunk(
   'reels/toggleReelSave',
-  async (reelId, { rejectWithValue }) => {
+  async (reelId, { rejectWithValue, getState, dispatch }) => {
+    const { reels: state } = getState()
+    const reel = state.reels.find((r) => String(r._id) === String(reelId))
+    const prevSaved = !!reel?.isSaved
+    // Optimistic update — instant UI feedback
+    dispatch(updateReel({ reelId, isSaved: !prevSaved }))
     try {
       const { data } = await api.post(`/vibes/${reelId}/save`)
-      return { reelId, isSaved: !!data?.data?.isSaved }
+      return { reelId, isSaved: data?.isSaved ?? !prevSaved }
     } catch (error) {
+      // Revert on failure
+      dispatch(updateReel({ reelId, isSaved: prevSaved }))
       return rejectWithValue(error?.response?.data?.message || 'Failed to update save.')
     }
   }

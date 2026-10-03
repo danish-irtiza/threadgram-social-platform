@@ -249,7 +249,7 @@ const profileSlice = createSlice({
         state.notFound = !!action.payload?.notFound
       })
       .addCase(toggleFollowUser.fulfilled, (state, action) => {
-        const { isFollowing, isRequested } = action.meta.arg
+        const { userId, isFollowing, isRequested } = action.meta.arg
         const responseData = action.payload?.data?.data || {}
         const newStatus = responseData.followStatus
 
@@ -259,7 +259,30 @@ const profileSlice = createSlice({
         const viewerFollowingCount = responseData.viewerFollowingCount
         const targetFollowerCount = responseData.targetFollowerCount
 
-        if (state.profile) {
+        // ── Compute next relationship flags ──────────────────────────────────
+        let nextIsFollowing = false
+        let nextIsRequested = false
+
+        if (isFollowing) {
+          // Unfollow: accepted → idle
+          nextIsFollowing = false
+          nextIsRequested = false
+        } else if (isRequested) {
+          // Cancel: pending → idle
+          nextIsFollowing = false
+          nextIsRequested = false
+        } else if (newStatus === 'accepted') {
+          // Follow accepted (public account or follow-back on public)
+          nextIsFollowing = true
+          nextIsRequested = false
+        } else if (newStatus === 'pending') {
+          // Follow request sent (private account)
+          nextIsFollowing = false
+          nextIsRequested = true
+        }
+
+        // ── Patch state.profile if it is the target ──────────────────────────
+        if (state.profile && String(state.profile._id) === String(userId)) {
           if (isFollowing) {
             // Was following (accepted) → now unfollowing
             console.log(
@@ -277,8 +300,6 @@ const profileSlice = createSlice({
               state.profile.postsRestricted = true
               state.profile.posts = []
             }
-            // Stash counts for auth.user update via component dispatch
-            state._viewerFollowingCount = viewerFollowingCount
           } else if (isRequested) {
             // Was pending → now cancelling request
             console.log('[profileSlice] toggleFollowUser: CANCEL pending → idle')
@@ -311,9 +332,23 @@ const profileSlice = createSlice({
               // pending request: content stays locked
               state.profile.postsRestricted = !!state.profile.isPrivate
             }
-            state._viewerFollowingCount = viewerFollowingCount
+          }
+          // Stash counts for auth.user update via component dispatch
+          state._viewerFollowingCount = viewerFollowingCount
+        }
+
+        // ── Patch matching entries in followersList / followingList ───────────
+        const patchListUser = (u) => {
+          if (!u || String(u._id) !== String(userId)) return u
+          return {
+            ...u,
+            isFollowing: nextIsFollowing,
+            isRequested: nextIsRequested,
+            // isFollower stays as-is (their follow direction to viewer hasn't changed)
           }
         }
+        state.followersList = (state.followersList || []).map(patchListUser)
+        state.followingList = (state.followingList || []).map(patchListUser)
       })
       .addCase(acceptFollowRequest.fulfilled, (state, action) => {
         const requesterId = action.meta.arg.requesterId
@@ -341,6 +376,14 @@ const profileSlice = createSlice({
         }
         // Stash viewer's own followerCount so component can patch auth.user
         state._viewerFollowerCount = ownerFollowerCount
+
+        // Patch list entries: the requester now has accepted follow to viewer
+        const patchAccepted = (u) => {
+          if (!u || String(u._id) !== String(requesterId)) return u
+          return { ...u, isFollower: true, isReceivedPendingRequest: false }
+        }
+        state.followersList = (state.followersList || []).map(patchAccepted)
+        state.followingList = (state.followingList || []).map(patchAccepted)
       })
       .addCase(rejectFollowRequest.fulfilled, (state, action) => {
         const requesterId = action.meta.arg.requesterId
@@ -350,6 +393,17 @@ const profileSlice = createSlice({
           state.profile.isReceivedPendingRequest = false
           state.profile.isFollower = false
         }
+
+        // Remove the requester from followersList (request rejected → no longer a follower)
+        state.followersList = (state.followersList || []).filter(
+          (u) => !u || String(u._id) !== String(requesterId)
+        )
+        // Patch followingList too in case they appear there
+        const patchRejected = (u) => {
+          if (!u || String(u._id) !== String(requesterId)) return u
+          return { ...u, isFollower: false, isReceivedPendingRequest: false }
+        }
+        state.followingList = (state.followingList || []).map(patchRejected)
       })
       .addCase(fetchFollowers.pending, (state) => {
         state.isListLoading = true

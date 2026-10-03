@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Bell, LogOut, Moon, Plus, Sun, Loader2 } from "lucide-react";
+import { Bell, LogOut, Moon, Plus, Sun, Loader2, ChevronDown } from "lucide-react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils.js";
@@ -10,19 +10,18 @@ import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg
 import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
 import lightWordmark from "@/assets/logo/thredgram-wordmark-light-theme-removebg-preview.png";
 import darkWordmark from "@/assets/logo/thredgram-wordmark-dark-theme-removebg-preview.png";
+import UnfollowConfirmModal from "@/components/model/UnfollowConfirmModal.jsx";
+import Button from "@/components/ui/Button.jsx";
 
 function FollowPill({ state = "idle", onClick, className, loading }) {
-  const tokens = {
-    idle: "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
-    followback:
-      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
-    accept:
-      "bg-indigo hover:bg-indigo-hover text-white shadow-[0_6px_16px_-6px_rgba(107,91,255,0.50)]",
-    following:
-      "bg-overlay hover:bg-overlay-hover text-ink border border-border",
-    requested:
-      "bg-overlay hover:bg-overlay-hover text-ink border border-border",
+  const variantMap = {
+    idle: "primary",
+    followback: "primary",
+    accept: "primary",
+    following: "secondary",
+    requested: "secondary",
   };
+
   const labels = {
     idle: "Follow",
     followback: "Follow Back",
@@ -30,25 +29,20 @@ function FollowPill({ state = "idle", onClick, className, loading }) {
     following: "Following",
     requested: "Requested",
   };
-  const label = labels[state] || labels.idle;
+
+  const isFollowing = state === "following";
 
   return (
-    <button
-      type="button"
-      disabled={loading}
+    <Button
+      variant={variantMap[state] || "primary"}
+      size="sm"
       onClick={onClick}
-      className={cn(
-        "h-8 min-w-[96px] shrink-0 rounded-full px-4 text-[13px] font-semibold leading-5 transition-all duration-120 ease-out active:scale-[0.98] flex items-center justify-center gap-1.5 disabled:opacity-50",
-        tokens[state] || tokens.idle,
-        className
-      )}
+      loading={loading}
+      className={cn("min-w-[92px]", className)}
     >
-      {loading ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        label
-      )}
-    </button>
+      <span>{labels[state] || "Follow"}</span>
+      {isFollowing && <ChevronDown size={14} className="ml-0.5 shrink-0" />}
+    </Button>
   );
 }
 
@@ -76,6 +70,8 @@ function Avatar({ src, size = 50, ringed = false, className }) {
   );
 }
 
+
+
 export default function HomeLeftSidebar({ className }) {
   const { resolvedTheme, toggleTheme } = useTheme();
   const dispatch = useDispatch();
@@ -89,6 +85,11 @@ export default function HomeLeftSidebar({ className }) {
   const [suggestedUsers, setSuggestedUsers] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(true);
   const [actionLoading, setActionLoading] = useState({});
+  const [confirmModal, setConfirmModal] = useState({
+    open: false,
+    user: null,
+    type: "unfollow",
+  });
 
   const fetchSuggestedUsers = useCallback(async () => {
     try {
@@ -96,9 +97,10 @@ export default function HomeLeftSidebar({ className }) {
       const res = await api.get("/users/suggest?limit=5");
       const users = res.data?.data?.users || [];
       const mapped = users.map((u) => {
-        // Priority order: accept > following > requested > followback > idle
+        // Priority order: accept > mutual (message) > following > requested > followback > idle
         let followState = "idle";
         if (u.isReceivedPendingRequest) followState = "accept";
+        else if (u.isFollowing && u.isFollower) followState = "message";
         else if (u.isFollowing) followState = "following";
         else if (u.isRequested) followState = "requested";
         else if (u.isFollower) followState = "followback";
@@ -122,7 +124,7 @@ export default function HomeLeftSidebar({ className }) {
     fetchSuggestedUsers();
   }, [fetchSuggestedUsers]);
 
-  const handleFollowToggle = async (user) => {
+  const executeFollowToggle = async (user) => {
     const userId = user._id;
     setActionLoading((prev) => ({ ...prev, [userId]: true }));
     try {
@@ -151,7 +153,7 @@ export default function HomeLeftSidebar({ className }) {
           const target = prev.find((u) => u._id === userId);
           const afterUnfollow = target?.isFollower ? "followback" : "idle";
           return prev.map((u) =>
-            u._id === userId ? { ...u, followState: afterUnfollow } : u
+            u._id === userId ? { ...u, followState: afterUnfollow, isFollowing: false } : u
           );
         });
         if (typeof viewerFollowingCount === "number") {
@@ -164,34 +166,52 @@ export default function HomeLeftSidebar({ className }) {
           const target = prev.find((u) => u._id === userId);
           const afterCancel = target?.isFollower ? "followback" : "idle";
           return prev.map((u) =>
-            u._id === userId ? { ...u, followState: afterCancel } : u
+            u._id === userId ? { ...u, followState: afterCancel, isRequested: false } : u
           );
         });
       } else if (user.followState === "accept") {
         console.log(`[Suggestions] ACCEPT incoming request -> user=${user.username}`);
         const res = await api.post(`/follow/${userId}/accept`);
         const ownerFollowerCount = res.data?.data?.ownerFollowerCount;
-        // After acceptance: we (viewer) are now accepted follower of user
-        // Also, user already follows us (they sent the request), so:
-        //   user.isFollower=true (user follows us accepted)
-        //   user.isFollowing=true (we follow user, now accepted)
-        // So result followState = following (mutual)
         setSuggestedUsers((prev) =>
           prev.map((u) =>
             u._id === userId
-              ? { ...u, followState: "following", isFollowing: true, isReceivedPendingRequest: false }
+              ? { ...u, followState: "message", isFollowing: true, isFollower: true, isReceivedPendingRequest: false }
               : u
           )
         );
         if (typeof ownerFollowerCount === "number") {
-          // ownerFollowerCount = viewer's (my) new follower count
           dispatch(patchCurrentUser({ followerCount: ownerFollowerCount }));
         }
+      } else if (user.followState === "message") {
+        navigate(`/${user.username}`);
       }
     } catch (err) {
       console.error("Follow action failed:", err);
     } finally {
       setActionLoading((prev) => ({ ...prev, [userId]: false }));
+    }
+  };
+
+  const handleFollowToggle = (user) => {
+    if (user.followState === "following") {
+      if (user.isPrivate) {
+        setConfirmModal({ open: true, user, type: "unfollow" });
+      } else {
+        executeFollowToggle(user);
+      }
+    } else if (user.followState === "requested") {
+      setConfirmModal({ open: true, user, type: "cancelRequest" });
+    } else {
+      executeFollowToggle(user);
+    }
+  };
+
+  const handleConfirmAction = async () => {
+    const target = confirmModal.user;
+    setConfirmModal({ open: false, user: null, type: "unfollow" });
+    if (target) {
+      await executeFollowToggle(target);
     }
   };
 
@@ -341,6 +361,15 @@ export default function HomeLeftSidebar({ className }) {
           © {new Date().getFullYear()} Threadgram · Terms · Privacy
         </p>
       </footer>
+
+      <UnfollowConfirmModal
+        isOpen={confirmModal.open}
+        onClose={() => setConfirmModal({ open: false, user: null, type: "unfollow" })}
+        onConfirm={handleConfirmAction}
+        user={confirmModal.user}
+        type={confirmModal.type}
+        isLoading={confirmModal.user ? !!actionLoading[confirmModal.user._id] : false}
+      />
     </aside>
   );
 }

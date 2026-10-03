@@ -4,6 +4,7 @@ import { User, Camera, Mail, AtSign, AlignLeft, Check, AlertCircle, Loader2 } fr
 import api from "@/api/axios.js";
 import { setUser } from "@/redux/features/auth/authSlice.js";
 import { fetchProfile } from "@/redux/features/profile/profileSlice.js";
+import { normalizeUsername, USERNAME_RULES } from "@/utils/normalizeUsername.js";
 
 export default function AccountSettings() {
   const dispatch = useDispatch();
@@ -48,7 +49,10 @@ export default function AccountSettings() {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: name === "username" ? normalizeUsername(value) : value,
+    }));
     setErrorMsg("");
     setSuccessMsg("");
   };
@@ -196,6 +200,7 @@ export default function AccountSettings() {
               className="w-full pl-9 pr-4 py-2 text-sm rounded-xl border border-border bg-surface text-ink focus:outline-none focus:border-indigo transition-colors"
             />
           </div>
+          <p className="mt-1 pl-1 text-[11px] text-muted">{USERNAME_RULES}</p>
         </div>
 
         {/* Email (Read Only) */}

@@ -1,9 +1,9 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import HomeLeftSidebar from "@components/home/HomeLeftSidebar.jsx";
 import HomeCenterColumn from "@components/home/HomeCenterColumn.jsx";
 import HomeRightPanel from "@components/home/HomeRightPanel.jsx";
 import { cn } from "@/lib/utils.js";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import LeftCornerNav from "../components/navigation/LeftCornerNav";
 import MobileTopNav from "../components/navigation/MobileTopNav";
 import { useCreateModal } from "../context/CreateModalContext";
@@ -11,12 +11,24 @@ import { useCreateModal } from "../context/CreateModalContext";
 import { useSelector } from "react-redux";
 import AuthPromptModal from "../components/model/AuthPromptModal";
 
-export default function HomePage() {
-  const [activeTab, setActiveTab] = useState("home");
+export default function HomePage({ initialTab = "home" }) {
+  const location = useLocation();
+  const getTabFromPath = (path) => {
+    if (path === "/reels" || path === "/vibes") return "reels";
+    if (path === "/search") return "search";
+    return initialTab;
+  };
+
+  const [activeTab, setActiveTab] = useState(() => getTabFromPath(location.pathname));
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const { openCreate } = useCreateModal();
   const navigate = useNavigate();
   const accessToken = useSelector((s) => s.auth?.accessToken) || localStorage.getItem("accessToken");
+
+  useEffect(() => {
+    const tab = getTabFromPath(location.pathname);
+    setActiveTab(tab);
+  }, [location.pathname, initialTab]);
 
   const handleTabChange = useCallback(
     (id) => {
@@ -29,12 +41,20 @@ export default function HomePage() {
         openCreate("post");
         return;
       }
-      setActiveTab(id);
-      if (id === "profile") {
+      if (id === "reels") {
+        setActiveTab("reels");
+        if (location.pathname !== "/reels") navigate("/reels");
+      } else if (id === "home") {
+        setActiveTab("home");
+        if (location.pathname !== "/") navigate("/");
+      } else if (id === "search") {
+        setActiveTab("search");
+        if (location.pathname !== "/search") navigate("/search");
+      } else if (id === "profile") {
         navigate(accessToken ? "/me" : "/login", { replace: false });
       }
     },
-    [accessToken, navigate, openCreate]
+    [accessToken, navigate, openCreate, location.pathname]
   );
 
   return (

@@ -126,6 +126,7 @@ const sanitizeProfileResponse = async (profileUserDoc, viewer) => {
     // Compute final UI button state
     let uiState = "follow"
     if (isReceivedPendingRequest) uiState = "accept"
+    else if (isFollowing && isFollower) uiState = "message"
     else if (isFollowing) uiState = "following"
     else if (isRequested) uiState = "requested"
     else if (isFollower) uiState = "followback"
@@ -366,8 +367,14 @@ const getUser = async (req, res) => {
     }
 
     if (!user) {
-      const normalized = String(username).trim().toLowerCase()
-      user = await User.findOne({ username: normalized })
+      // Strip leading @ (social-style URLs) and decode URI-encoded characters
+      let cleaned = String(username).trim()
+      try { cleaned = decodeURIComponent(cleaned) } catch { /* already decoded */ }
+      cleaned = cleaned.replace(/^@+/, '')
+      // Case-insensitive lookup: some legacy users bypassed the lowercase transform
+      user = await User.findOne({
+        username: { $regex: new RegExp(`^${cleaned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+      })
     }
 
     if (!user) {

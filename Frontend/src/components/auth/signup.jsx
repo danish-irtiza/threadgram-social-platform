@@ -10,6 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { normalizeUsername, USERNAME_REGEX, USERNAME_RULES } from "@/utils/normalizeUsername.js";
 import { designSystem } from "@doc/designSystem";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks.js";
 import {
@@ -143,8 +144,8 @@ const Signup = () => {
       setLocalError("Username cannot be more than 30 characters.");
       return;
     }
-    if (!/^[a-zA-Z0-9_]+$/.test(username.trim())) {
-      setLocalError("Username can only contain letters, numbers, and underscores.");
+    if (!/^[a-z0-9_\-]+$/.test(username.trim())) {
+      setLocalError(USERNAME_RULES);
       return;
     }
 
@@ -304,7 +305,7 @@ const Signup = () => {
                   placeholder="Username (e.g. john_doe)"
                   type="text"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => setUsername(normalizeUsername(e.target.value))}
                   onFocus={() => setIsFocused((s) => ({ ...s, username: true }))}
                   onBlur={() => setIsFocused((s) => ({ ...s, username: false }))}
                   className={cn(

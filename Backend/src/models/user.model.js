@@ -17,8 +17,8 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       match: [
-        /^[a-zA-Z0-9_]+$/,
-        "Username can only contain letters, numbers, and underscores",
+        /^[a-z0-9_\-]+$/,
+        "Username can only contain lowercase letters, numbers, underscores, and hyphens",
       ],
       minlength: [3, "Username must be at least 3 characters"],
       maxlength: [30, "Username cannot be more than 30 characters"],
@@ -129,6 +129,16 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 )
+
+const normalizeUsername = require("../utils/normalizeUsername")
+
+// Auto-normalize username before every save (catches legacy & edge-case data)
+userSchema.pre("save", function (next) {
+  if (this.isModified("username") || this.isNew) {
+    this.username = normalizeUsername(this.username)
+  }
+  if (typeof next === "function") next()
+})
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
   try {

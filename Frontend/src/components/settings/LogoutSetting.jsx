@@ -28,8 +28,8 @@ export default function LogoutSetting({ onClose }) {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-xl font-bold text-red-500 flex items-center gap-2">
-          <LogOut className="h-5 w-5" />
+        <h3 className="text-xl font-bold text-ink flex items-center gap-2">
+          <LogOut className="h-5 w-5 text-indigo" />
           Log Out
         </h3>
         <p className="mt-1 text-sm text-muted">
@@ -37,9 +37,9 @@ export default function LogoutSetting({ onClose }) {
         </p>
       </div>
 
-      <div className="p-5 rounded-2xl border border-red-500/20 bg-red-500/5 space-y-4">
+      <div className="p-5 rounded-2xl border border-border bg-surface space-y-4">
         <div className="flex items-start gap-3.5">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-red-500/15 text-red-500">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-overlay text-ink">
             <ShieldAlert size={20} />
           </div>
           <div>
@@ -55,7 +55,7 @@ export default function LogoutSetting({ onClose }) {
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="h-9 px-4 rounded-full cursor-pointer border border-border bg-surface hover:bg-surface-elevated text-ink text-xs font-semibold transition-all"
+            className="h-9 px-4 rounded-full cursor-pointer border border-border bg-surface hover:bg-surface-elevated text-ink text-xs font-bold transition-all"
           >
             Cancel
           </button>
@@ -63,9 +63,9 @@ export default function LogoutSetting({ onClose }) {
             type="button"
             onClick={handleConfirmLogout}
             disabled={loading}
-            className="h-9 px-5 cursor-pointer rounded-full bg-red-500 hover:bg-red-700 text-white text-xs font-semibold transition-all shadow-md active:scale-95 flex items-center gap-2 disabled:opacity-50"
+            className="h-9 px-5 cursor-pointer rounded-full bg-white hover:bg-surface-elevated text-[#C62828] border-2 border-[#C62828] text-xs font-black transition-all active:scale-[0.98] flex items-center gap-2 disabled:opacity-50"
           >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
+            {loading ? <Loader2 size={14} className="animate-spin" strokeWidth={2.5} /> : <LogOut size={14} strokeWidth={2.5} />}
             Confirm Logout
           </button>
         </div>

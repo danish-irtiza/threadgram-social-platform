@@ -1022,13 +1022,28 @@ const getReelsFeed = async (req, res) => {
       .populate("comment.user", "_id name username avatar")
       .lean();
 
-    // 2. Filter: public-account authors ONLY, exclude current user's own vibes
+    // 2. Fetch followed authors for current viewer if logged in
     const cUserIdStr = currentUserId ? String(currentUserId) : null;
+    let followedAuthorSet = new Set();
+    if (currentUserId) {
+      const acceptedFollows = await Follow.find({
+        follower: new mongoose.Types.ObjectId(currentUserId),
+        status: "accepted",
+      })
+        .select("following")
+        .lean();
+      acceptedFollows.forEach((f) => followedAuthorSet.add(String(f.following)));
+    }
+
+    // 3. Filter: include own vibes, public account vibes, or vibes from followed private accounts
     const filteredRaw = rawVibes.filter((v) => {
-      const authorIdStr = String(v?.author?._id || v?.author);
-      if (cUserIdStr && authorIdStr === cUserIdStr) return false;
-      if (v?.author?.isPrivate) return false;
-      return true;
+      if (!v || !v.author) return false;
+      const authorIdStr = String(v.author._id || v.author);
+      const isOwner = !!(cUserIdStr && authorIdStr === cUserIdStr);
+      const isPublic = !v.author.isPrivate;
+      const isFollowing = followedAuthorSet.has(authorIdStr);
+
+      return isOwner || isPublic || isFollowing;
     });
 
     const now = Date.now();

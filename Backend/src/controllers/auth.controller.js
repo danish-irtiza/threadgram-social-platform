@@ -6,6 +6,7 @@ const { hashPassword, comparePassword } = require("../utils/bycrypt/bycrypt.js")
 const crypto = require("crypto")
 const sendEmail = require("../config/send-mail.js")
 const oauth2 = require("../config/google.js")
+const normalizeUsername = require("../utils/normalizeUsername")
 const baseUrl = () => process.env.CLIENT_URL || `http://localhost:${process.env.PORT || 8000}`
 
 const createVerificationEmail = async (user) => {
@@ -617,12 +618,9 @@ const oAuthCallbackHandler = async (req, res) => {
       const password = await hashPassword(randomPassword)
 
       const displayName = name || normalizedEmail.split("@")[0]
-      let baseHandle = (normalizedEmail.split("@")[0] || displayName)
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, "_")
-        .replace(/_+/g, "_")
-        .replace(/^_|_$/g, "")
-        .slice(0, 24) || "user"
+      let baseHandle = normalizeUsername(
+        normalizedEmail.split("@")[0] || displayName
+      ).slice(0, 24) || "user"
       if (baseHandle.length < 3) baseHandle = baseHandle.padEnd(3, "_")
 
       let finalUsername = baseHandle

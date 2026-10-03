@@ -11,6 +11,18 @@ const   router = createBrowserRouter([
                 element: <HomePage />
             },
             {
+                path: '/reels',
+                element: <HomePage initialTab="reels" />
+            },
+            {
+                path: '/vibes',
+                element: <HomePage initialTab="reels" />
+            },
+            {
+                path: '/search',
+                element: <HomePage initialTab="search" />
+            },
+            {
                 path: '/me',
                 element: <ProfilePage />
             },
