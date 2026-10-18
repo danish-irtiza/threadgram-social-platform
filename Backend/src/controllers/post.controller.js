@@ -3,7 +3,7 @@ const Post = require("../models/post.model");
 const User = require("../models/user.model");
 const Follow = require("../models/follow.model");
 const uploadOnCloudinary = require("../config/cloudinary");
-const { uploadVideoOnCloudinary } = require("../config/cloudinary");
+const { uploadVideoOnCloudinary, deleteTempFile } = require("../config/cloudinary");
 const {
   createPostSchema,
   commentPostSchema,
@@ -56,12 +56,18 @@ const createPost = async (req, res) => {
 
     const caption = validated.data.caption || "";
 
-    // Detect mediaType (image or video)
+    // Detect mediaType (image or video) from MIME type or file extension
     const mime = file.mimetype || "";
+    const originalName = file.originalname || "";
+    const videoExtPattern = /\.(mp4|mov|avi|mkv|webm|m4v|3gp|wmv|flv)$/i;
+    const imageExtPattern = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
+
     let mediaType = "image";
-    if (mime.startsWith("video/")) {
+    if (mime.startsWith("video/") || videoExtPattern.test(originalName)) {
       mediaType = "video";
-    } else if (!mime.startsWith("image/")) {
+    } else if (mime.startsWith("image/") || imageExtPattern.test(originalName)) {
+      mediaType = "image";
+    } else {
       return res.status(400).json({
         status: "fail",
         message: "Only image and video files are supported",
@@ -111,6 +117,11 @@ const createPost = async (req, res) => {
       status: "error",
       message: error && error.message ? error.message : "Something went wrong while creating post.",
     });
+  } finally {
+    const file = req.file || (req.files && req.files[0]);
+    if (file) {
+      await deleteTempFile(file.path);
+    }
   }
 };
 
@@ -838,10 +849,26 @@ const getSavedPosts = async (req, res) => {
       });
     }
 
+    const validPosts = (user.savedPosts || []).filter((p) => p != null && p._id);
+    const formattedPosts = validPosts.map((post) => {
+      const p = post.toObject ? post.toObject() : post;
+      const isLiked =
+        Array.isArray(p.like) &&
+        p.like.some((id) => (id?._id || id).toString() === userId.toString());
+      return {
+        ...p,
+        isLiked,
+        isSaved: true,
+        likesCount: Array.isArray(p.like) ? p.like.length : 0,
+        commentsCount: Array.isArray(p.comment) ? p.comment.length : 0,
+        savesCount: Array.isArray(p.savedPost) ? p.savedPost.length : 0,
+      };
+    });
+
     return res.status(200).json({
       status: "success",
       data: {
-        savedPosts: user.savedPosts || [],
+        savedPosts: formattedPosts,
       },
     });
   } catch (error) {
@@ -855,75 +882,109 @@ const getSavedPosts = async (req, res) => {
 
 /**
  * GET /api/posts/feed
- * Get paginated feed posts. Filters out posts from private accounts
- * unless the authenticated viewer is an accepted follower.
+ * Finalized Feed Rules:
+ * - Posts: Logged-in user's own posts + eligible posts from followed accounts only.
+ * - Privacy: Enforce private-account permissions; exclude unfollowed accounts, deleted posts, duplicates.
+ * - Ordering: Newest first (createdAt: -1). Exclude recommended posts; Vibes/Reels stay separate.
+ * - Backend: Efficient database queries with indexing, validated pagination, minimal safe post payload.
+ * - Security: Server-side authentication check, zero sensitive fields exposed.
  */
 const getFeedPosts = async (req, res) => {
   try {
     const currentUserId = req.user && req.user.sub;
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
-    const skip = (page - 1) * limit;
-
-    // Fetch all posts with author privacy flag
-    const allPosts = await Post.find()
-      .sort({ createdAt: -1 })
-      .populate("author", "_id name username avatar isPrivate")
-      .populate("comment.user", "_id name username avatar")
-      .populate("comment.replies.user", "_id name username avatar")
-      .lean();
-
-    // Determine which private-account authors the viewer follows (accepted)
-    let accessiblePrivateAuthorIds = new Set();
-    if (currentUserId) {
-      const privateAuthorIds = [
-        ...new Set(
-          allPosts
-            .filter((p) => p.author?.isPrivate)
-            .map((p) => String(p.author._id))
-            .filter((id) => id !== String(currentUserId))
-        )
-      ];
-      if (privateAuthorIds.length > 0) {
-        const followRows = await Follow.find({
-          follower: currentUserId,
-          following: { $in: privateAuthorIds },
-          status: "accepted",
-        }).select("following").lean();
-        followRows.forEach((r) => accessiblePrivateAuthorIds.add(String(r.following)));
-      }
+    if (!currentUserId || !mongoose.Types.ObjectId.isValid(currentUserId)) {
+      return res.status(401).json({
+        status: "fail",
+        message: "Authentication required to access the feed.",
+      });
     }
 
-    // Filter: keep post if:
-    //   - author is public, OR
-    //   - viewer is the author themselves, OR
-    //   - viewer is an accepted follower
-    const visiblePosts = allPosts.filter((p) => {
-      if (!p.author?.isPrivate) return true;
-      if (currentUserId && String(p.author._id) === String(currentUserId)) return true;
-      return accessiblePrivateAuthorIds.has(String(p.author._id));
+    // Input validation & sanitization for pagination
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLimit = parseInt(req.query.limit, 10);
+
+    const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(50, rawLimit) : 10;
+    const skip = (page - 1) * limit;
+
+    // 1. Identify user's accepted followed accounts
+    // Only 'accepted' follow relationships are eligible (excludes pending or unfollowed accounts)
+    const follows = await Follow.find({
+      follower: currentUserId,
+      status: "accepted",
+    })
+      .select("following")
+      .lean();
+
+    const followedAccountIds = follows
+      .map((f) => f.following)
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
+
+    // 2. Build list of eligible author IDs: own posts + accepted followed accounts only
+    const eligibleAuthorIds = [
+      currentUserId,
+      ...followedAccountIds,
+    ];
+
+    // 3. Query DB efficiently using MongoDB index { author: 1, createdAt: -1 }
+    const filter = { author: { $in: eligibleAuthorIds } };
+
+    const [posts, totalPosts] = await Promise.all([
+      Post.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate("author", "_id name username avatar isPrivate")
+        .populate("comment.user", "_id name username avatar")
+        .populate("comment.replies.user", "_id name username avatar")
+        .lean(),
+      Post.countDocuments(filter),
+    ]);
+
+    // Exclude posts where author was deleted (author is null)
+    const validPosts = posts.filter((p) => p && p.author != null);
+
+    // 4. Transform to safe, minimal post-data response with user interaction states
+    const safePosts = validPosts.map((post) => {
+      const isLiked =
+        Array.isArray(post.like) &&
+        post.like.some((id) => String(id?._id || id) === String(currentUserId));
+
+      const isSaved =
+        Array.isArray(post.savedPost) &&
+        post.savedPost.some((id) => String(id?._id || id) === String(currentUserId));
+
+      return {
+        _id: post._id,
+        author: post.author,
+        media: post.media,
+        mediaType: post.mediaType,
+        caption: post.caption || "",
+        like: post.like || [],
+        likesCount: Array.isArray(post.like) ? post.like.length : 0,
+        isLiked,
+        comment: post.comment || [],
+        commentsCount: Array.isArray(post.comment) ? post.comment.length : 0,
+        savedPost: post.savedPost || [],
+        isSaved,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt,
+      };
     });
 
-    const totalPosts = visiblePosts.length;
-    const paginated = visiblePosts.slice(skip, skip + limit);
-
-    console.log(`[getFeedPosts] viewer=${currentUserId} total=${totalPosts} returning ${paginated.length} on page ${page}`);
-
-    const postsWithCounts = paginated.map((p) => ({
-      ...p,
-      likesCount: Array.isArray(p.like) ? p.like.length : 0,
-      commentsCount: Array.isArray(p.comment) ? p.comment.length : 0,
-    }));
+    const totalPages = Math.ceil(totalPosts / limit) || 1;
+    const hasMore = page < totalPages;
 
     return res.status(200).json({
       status: "success",
       data: {
-        posts: postsWithCounts,
+        posts: safePosts,
         pagination: {
           page,
           limit,
           totalPosts,
-          totalPages: Math.ceil(totalPosts / limit),
+          totalPages,
+          hasMore,
         },
       },
     });

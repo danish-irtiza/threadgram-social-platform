@@ -33,15 +33,20 @@ export default function StoryViewerModal() {
   const { activeViewer, storyViewersData } = useSelector((s) => s.story || {});
   const { isOpen, groupIndex = 0, storyIndex = 0, groups = [] } = activeViewer || {};
 
-  const [progress, setProgress] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [showViewersSheet, setShowViewersSheet] = useState(false);
+  const [isSheetClosing, setIsSheetClosing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
 
   const videoRef = useRef(null);
-  const progressTimerRef = useRef(null);
+  const activeProgressBarRef = useRef(null);
+  const waitingTimerRef = useRef(null);
+  const imageAnimRef = useRef(null);
+  const lastTimeRef = useRef(0);
   const elapsedRef = useRef(0);
+  const prevStoryIdRef = useRef(null);
 
   const currentGroup = groups[groupIndex] || null;
   const currentStoryList = currentGroup?.stories || [];
@@ -49,24 +54,46 @@ export default function StoryViewerModal() {
   const author = currentGroup?.user || currentStory?.author || {};
 
   const isOwner = currentUserId && String(currentUserId) === String(author._id);
-  const isVideo = currentStory?.mediaType === "video" || currentStory?.media?.match(/\.(mp4|webm|mov)$/i);
+  const isVideo =
+    currentStory?.mediaType === "video" ||
+    Boolean(currentStory?.media?.match(/\.(mp4|webm|mov|mkv|m4v)(\?.*)?$/i)) ||
+    Boolean(currentStory?.media?.includes("/video/upload/"));
 
   // Whether the timer should be paused (menu or viewers sheet open)
   const isPaused = showMenu || showViewersSheet;
+
+  // Smoothly close the viewers bottom sheet with exit animation
+  const handleCloseViewersSheet = useCallback(() => {
+    if (isSheetClosing) return;
+    setIsSheetClosing(true);
+    setTimeout(() => {
+      setShowViewersSheet(false);
+      setIsSheetClosing(false);
+    }, 220);
+  }, [isSheetClosing]);
 
   // Close viewer
   const handleClose = useCallback(() => {
     dispatch(closeStoryViewer());
     setShowViewersSheet(false);
+    setIsSheetClosing(false);
     setShowMenu(false);
-    setProgress(0);
     elapsedRef.current = 0;
+    if (activeProgressBarRef.current) {
+      activeProgressBarRef.current.style.width = "0%";
+    }
   }, [dispatch]);
 
   // Navigate next story / next group
   const handleNext = useCallback(() => {
-    setProgress(0);
+    if (showViewersSheet) {
+      setShowViewersSheet(false);
+      setIsSheetClosing(false);
+    }
     elapsedRef.current = 0;
+    if (activeProgressBarRef.current) {
+      activeProgressBarRef.current.style.width = "0%";
+    }
     if (storyIndex < currentStoryList.length - 1) {
       dispatch(setActiveViewerIndexes({ groupIndex, storyIndex: storyIndex + 1 }));
     } else if (groupIndex < groups.length - 1) {
@@ -74,12 +101,18 @@ export default function StoryViewerModal() {
     } else {
       handleClose();
     }
-  }, [storyIndex, currentStoryList.length, groupIndex, groups.length, dispatch, handleClose]);
+  }, [showViewersSheet, storyIndex, currentStoryList.length, groupIndex, groups.length, dispatch, handleClose]);
 
   // Navigate prev story / prev group
   const handlePrev = useCallback(() => {
-    setProgress(0);
+    if (showViewersSheet) {
+      setShowViewersSheet(false);
+      setIsSheetClosing(false);
+    }
     elapsedRef.current = 0;
+    if (activeProgressBarRef.current) {
+      activeProgressBarRef.current.style.width = "0%";
+    }
     if (storyIndex > 0) {
       dispatch(setActiveViewerIndexes({ groupIndex, storyIndex: storyIndex - 1 }));
     } else if (groupIndex > 0) {
@@ -91,102 +124,207 @@ export default function StoryViewerModal() {
         })
       );
     }
-  }, [storyIndex, groupIndex, groups, dispatch]);
+  }, [showViewersSheet, storyIndex, groupIndex, groups, dispatch]);
 
-  // Mark story as viewed
+  // Reset progress and elapsed time whenever active story changes
+  useEffect(() => {
+    if (currentStory?._id !== prevStoryIdRef.current) {
+      prevStoryIdRef.current = currentStory?._id;
+      elapsedRef.current = 0;
+      if (activeProgressBarRef.current) {
+        activeProgressBarRef.current.style.width = "0%";
+      }
+    }
+  }, [currentStory?._id]);
+
+  // Mark story as viewed (both locally in Redux and persisted via backend API for all users)
   useEffect(() => {
     if (!isOpen || !currentStory?._id) return;
-    if (isOwner) {
-      // Owner viewing own story — mark viewed locally in Redux only
-      if (!currentStory.isViewed) {
-        dispatch(markStoryViewedLocally(currentStory._id));
-      }
-    } else if (!currentStory.isViewed) {
+    if (!currentStory.isViewed) {
+      dispatch(markStoryViewedLocally(currentStory._id));
       dispatch(markStoryViewed(currentStory._id));
     }
-  }, [isOpen, currentStory?._id, isOwner, dispatch]);
+  }, [isOpen, currentStory?._id, currentStory?.isViewed, dispatch]);
 
-  // Progress timer for Image stories (with pause/resume support)
+  // Progress timer for Image stories (smooth 60fps rAF with pause/resume support)
   useEffect(() => {
     if (!isOpen || !currentStory || isVideo) return;
 
-    const DURATION = 5000;
-    const INTERVAL = 50;
-
-    // Reset on new story
-    elapsedRef.current = 0;
-    setProgress(0);
-
-    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-
-    progressTimerRef.current = setInterval(() => {
-      elapsedRef.current += INTERVAL;
-      const pct = Math.min(100, (elapsedRef.current / DURATION) * 100);
-      setProgress(pct);
-      if (elapsedRef.current >= DURATION) {
-        clearInterval(progressTimerRef.current);
-        handleNext();
-      }
-    }, INTERVAL);
-
-    return () => {
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    };
-  }, [isOpen, currentStory?._id, isVideo, handleNext]);
-
-  // Pause / Resume timer when menu or viewers sheet is open
-  useEffect(() => {
-    if (!isOpen || !currentStory) return;
+    if (activeProgressBarRef.current) {
+      activeProgressBarRef.current.style.width = `${(elapsedRef.current / 5000) * 100}%`;
+    }
 
     if (isPaused) {
-      // Pause: clear the interval and pause video
-      if (progressTimerRef.current) {
-        clearInterval(progressTimerRef.current);
-        progressTimerRef.current = null;
+      return;
+    }
+
+    const DURATION = 5000;
+    lastTimeRef.current = performance.now();
+
+    const tick = (now) => {
+      const delta = now - lastTimeRef.current;
+      lastTimeRef.current = now;
+      elapsedRef.current += delta;
+
+      const pct = Math.min(100, (elapsedRef.current / DURATION) * 100);
+      if (activeProgressBarRef.current) {
+        activeProgressBarRef.current.style.width = `${pct}%`;
       }
-      if (isVideo && videoRef.current) {
+
+      if (elapsedRef.current >= DURATION) {
+        elapsedRef.current = 0;
+        handleNext();
+      } else {
+        imageAnimRef.current = requestAnimationFrame(tick);
+      }
+    };
+
+    imageAnimRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (imageAnimRef.current) {
+        cancelAnimationFrame(imageAnimRef.current);
+        imageAnimRef.current = null;
+      }
+    };
+  }, [isOpen, currentStory?._id, isVideo, isPaused, handleNext]);
+
+  // Pause / Resume video when menu or viewers sheet is open
+  useEffect(() => {
+    if (!isOpen || !currentStory || !isVideo) return;
+
+    if (isPaused) {
+      if (videoRef.current && !videoRef.current.paused) {
         videoRef.current.pause();
       }
     } else {
-      // Resume
-      if (isVideo && videoRef.current) {
+      if (videoRef.current && videoRef.current.paused) {
         videoRef.current.play().catch(() => {});
-      } else if (!isVideo) {
-        // Resume image timer from where it left off
-        const DURATION = 5000;
-        const INTERVAL = 50;
-
-        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-
-        progressTimerRef.current = setInterval(() => {
-          elapsedRef.current += INTERVAL;
-          const pct = Math.min(100, (elapsedRef.current / DURATION) * 100);
-          setProgress(pct);
-          if (elapsedRef.current >= DURATION) {
-            clearInterval(progressTimerRef.current);
-            handleNext();
-          }
-        }, INTERVAL);
       }
     }
+  }, [isPaused, isVideo, isOpen, currentStory?._id]);
+
+  // 60fps animation loop for video progress bar sync (direct DOM style update, no React re-render thrashing)
+  useEffect(() => {
+    if (!isOpen || !currentStory || !isVideo || isPaused) return;
+
+    let animId;
+    const syncVideoProgress = () => {
+      const video = videoRef.current;
+      if (
+        video &&
+        !video.paused &&
+        !video.ended &&
+        isFinite(video.duration) &&
+        video.duration > 0
+      ) {
+        const pct = Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100));
+        if (activeProgressBarRef.current) {
+          activeProgressBarRef.current.style.width = `${pct}%`;
+        }
+      }
+      if (isOpen && isVideo && !isPaused) {
+        animId = requestAnimationFrame(syncVideoProgress);
+      }
+    };
+
+    animId = requestAnimationFrame(syncVideoProgress);
+    return () => {
+      if (animId) cancelAnimationFrame(animId);
+    };
+  }, [isOpen, currentStory?._id, isVideo, isPaused]);
+
+  // Auto-play video on story change with unmuted fallback
+  useEffect(() => {
+    if (!isOpen || !currentStory || !isVideo) return;
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    // If video is still buffering, debounce showing loader to avoid micro-stutter flashes
+    if (video.readyState < 3) {
+      if (waitingTimerRef.current) clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = setTimeout(() => {
+        setIsVideoLoading(true);
+      }, 250);
+    } else {
+      setIsVideoLoading(false);
+    }
+
+    const playVideo = async () => {
+      try {
+        await video.play();
+        if (waitingTimerRef.current) {
+          clearTimeout(waitingTimerRef.current);
+          waitingTimerRef.current = null;
+        }
+        setIsVideoLoading(false);
+      } catch (err) {
+        console.warn("Unmuted autoplay failed, muting video to enable playback:", err);
+        setIsMuted(true);
+        if (videoRef.current) {
+          videoRef.current.muted = true;
+          try {
+            await videoRef.current.play();
+            if (waitingTimerRef.current) {
+              clearTimeout(waitingTimerRef.current);
+              waitingTimerRef.current = null;
+            }
+            setIsVideoLoading(false);
+          } catch (retryErr) {
+            console.error("Video play failed completely:", retryErr);
+            setIsVideoLoading(false);
+          }
+        }
+      }
+    };
+
+    playVideo();
 
     return () => {
-      // Cleanup only when effect re-runs, not when pausing
+      if (waitingTimerRef.current) {
+        clearTimeout(waitingTimerRef.current);
+        waitingTimerRef.current = null;
+      }
     };
-  }, [isPaused]);
+  }, [isOpen, currentStory?._id, isVideo]);
 
-  // Video time update handler
+  // Video event handlers
   const handleVideoTimeUpdate = () => {
-    if (!videoRef.current) return;
-    const { currentTime, duration } = videoRef.current;
-    if (duration > 0) {
-      const pct = (currentTime / duration) * 100;
-      setProgress(pct);
+    const video = videoRef.current;
+    if (video && isFinite(video.duration) && video.duration > 0) {
+      const pct = Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100));
+      if (activeProgressBarRef.current) {
+        activeProgressBarRef.current.style.width = `${pct}%`;
+      }
     }
   };
 
-  // Video ended handler
+  const handleVideoPlaying = () => {
+    if (waitingTimerRef.current) {
+      clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = null;
+    }
+    setIsVideoLoading(false);
+  };
+
+  const handleVideoWaiting = () => {
+    if (waitingTimerRef.current) clearTimeout(waitingTimerRef.current);
+    // Debounce: only show loading spinner if buffering takes longer than 300ms
+    waitingTimerRef.current = setTimeout(() => {
+      setIsVideoLoading(true);
+    }, 300);
+  };
+
   const handleVideoEnded = () => {
+    if (waitingTimerRef.current) {
+      clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = null;
+    }
+    setIsVideoLoading(false);
+    if (activeProgressBarRef.current) {
+      activeProgressBarRef.current.style.width = "100%";
+    }
     handleNext();
   };
 
@@ -194,6 +332,7 @@ export default function StoryViewerModal() {
   const handleOpenViewersSheet = () => {
     if (!currentStory?._id || !isOwner) return;
     dispatch(fetchStoryViewers(currentStory._id));
+    setIsSheetClosing(false);
     setShowViewersSheet(true);
     setShowMenu(false);
   };
@@ -232,19 +371,19 @@ export default function StoryViewerModal() {
 
       {/* Story Card Container */}
       <div className="relative flex h-full w-full max-w-[420px] max-h-[100vh] sm:max-h-[860px] flex-col overflow-hidden bg-black shadow-2xl sm:rounded-3xl z-10">
-        
+
         {/* Top Progress Segment Bar */}
         <div className="absolute top-3 inset-x-3 z-30 flex items-center gap-1.5 pointer-events-none">
           {currentStoryList.map((st, idx) => {
-            let widthPct = 0;
-            if (idx < storyIndex) widthPct = 100;
-            else if (idx === storyIndex) widthPct = progress;
+            const isPast = idx < storyIndex;
+            const isCurrent = idx === storyIndex;
 
             return (
               <div key={st._id || idx} className="h-1 flex-1 overflow-hidden rounded-full bg-white/30 backdrop-blur-sm">
                 <div
-                  className="h-full bg-indigo transition-all duration-75"
-                  style={{ width: `${widthPct}%` }}
+                  ref={isCurrent ? activeProgressBarRef : null}
+                  className="h-full bg-indigo transition-none"
+                  style={{ width: isPast ? "100%" : "0%" }}
                 />
               </div>
             );
@@ -289,7 +428,13 @@ export default function StoryViewerModal() {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setIsMuted((m) => !m);
+                  setIsMuted((prev) => {
+                    const next = !prev;
+                    if (videoRef.current) {
+                      videoRef.current.muted = next;
+                    }
+                    return next;
+                  });
                 }}
                 className="grid h-8 w-8 place-items-center rounded-full text-white/80 hover:text-white transition-colors cursor-pointer"
               >
@@ -347,17 +492,27 @@ export default function StoryViewerModal() {
         {/* Media Player Area */}
         <div className="relative flex-1 w-full h-full flex items-center justify-center bg-black">
           {isVideo ? (
-            <video
-              ref={videoRef}
-              key={currentStory._id}
-              src={currentStory.media}
-              className="h-full w-full object-contain bg-black"
-              autoPlay
-              playsInline
-              muted={isMuted}
-              onTimeUpdate={handleVideoTimeUpdate}
-              onEnded={handleVideoEnded}
-            />
+            <>
+              <video
+                ref={videoRef}
+                key={currentStory._id}
+                src={currentStory.media}
+                className="h-full w-full object-contain bg-black"
+                autoPlay
+                playsInline
+                preload="auto"
+                muted={isMuted}
+                onTimeUpdate={handleVideoTimeUpdate}
+                onPlaying={handleVideoPlaying}
+                onWaiting={handleVideoWaiting}
+                onEnded={handleVideoEnded}
+              />
+              {isVideoLoading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/30 backdrop-blur-[2px]">
+                  <Loader2 size={36} className="animate-spin text-white/90" />
+                </div>
+              )}
+            </>
           ) : (
             <img
               src={currentStory.media}
@@ -432,70 +587,91 @@ export default function StoryViewerModal() {
 
         {/* Real-Time Story Viewers Modal Sheet (Owner Only) */}
         {showViewersSheet && isOwner && (
-          <div className="absolute inset-x-0 bottom-0 z-40 flex flex-col max-h-[70%] rounded-t-3xl border-t border-border bg-paper p-5 shadow-2xl animate-in slide-in-from-bottom duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
-              <div className="flex items-center gap-2">
-                <Eye size={18} className="text-indigo" />
-                <h4 className="text-sm font-bold text-ink">
-                  Story Views ({currentViewersInfo?.totalViewers ?? currentStory.viewsCount ?? 0})
-                </h4>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowViewersSheet(false)}
-                className="grid h-7 w-7 place-items-center rounded-full text-text-subtle hover:bg-surface-elevated hover:text-ink transition-colors cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Viewers List */}
-            <div className="mt-3 flex-1 overflow-y-auto space-y-2.5 pr-1">
-              {currentViewersInfo?.viewers?.length > 0 ? (
-                currentViewersInfo.viewers.map((viewer) => (
-                  <div
-                    key={viewer._id}
-                    onClick={() => {
-                      setShowViewersSheet(false);
-                      handleClose();
-                      navigate(`/${viewer.username}`);
-                    }}
-                    className="flex items-center justify-between p-2 rounded-2xl hover:bg-surface-elevated transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="h-9 w-9 rounded-full overflow-hidden border border-border bg-surface shrink-0">
-                        {viewer.avatar ? (
-                          <img src={viewer.avatar} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="h-full w-full bg-indigo text-white grid place-items-center text-xs font-bold">
-                            {(viewer.name || viewer.username || "U").charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-ink truncate">
-                          @{viewer.username}
-                        </p>
-                        <p className="text-[11px] text-text-subtle truncate">
-                          {viewer.name || ""}
-                        </p>
-                      </div>
-                    </div>
-
-                    {viewer.hasLiked && (
-                      <span className="text-rose-500">
-                        <Heart size={16} fill="currentColor" />
-                      </span>
-                    )}
-                  </div>
-                ))
-              ) : (
-                <div className="py-8 text-center text-xs text-text-subtle">
-                  No views from other users yet.
-                </div>
+          <>
+            {/* Dim backdrop to focus on sheet and dismiss on click outside */}
+            <div
+              className={cn(
+                "absolute inset-0 z-35 bg-black/60 backdrop-blur-[2px]",
+                isSheetClosing ? "animate-sheet-backdrop-out" : "animate-sheet-backdrop-in"
               )}
+              onClick={handleCloseViewersSheet}
+            />
+
+            {/* Bottom Sheet Card */}
+            <div
+              className={cn(
+                "absolute inset-x-0 bottom-0 z-40 flex flex-col max-h-[70%] rounded-t-3xl border-t border-border bg-paper p-5 shadow-2xl",
+                isSheetClosing ? "animate-sheet-slide-out" : "animate-sheet-slide-in"
+              )}
+            >
+              {/* Drag/Swipe Indicator Handle */}
+              <div className="w-10 h-1 bg-border-strong rounded-full mx-auto mb-3 shrink-0" />
+
+              <div className="flex items-center justify-between pb-3 border-b border-border-subtle shrink-0">
+                <div className="flex items-center gap-2">
+                  <Eye size={18} className="text-indigo" />
+                  <h4 className="text-sm font-bold text-ink">
+                    Story Views ({currentViewersInfo?.totalViewers ?? currentStory.viewsCount ?? 0})
+                  </h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseViewersSheet}
+                  className="grid h-7 w-7 place-items-center rounded-full text-text-subtle hover:bg-surface-elevated hover:text-ink transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Viewers List */}
+              <div className="mt-3 flex-1 overflow-y-auto space-y-2.5 pr-1 custom-scrollbar">
+                {currentViewersInfo?.viewers?.length > 0 ? (
+                  currentViewersInfo.viewers.map((viewer) => (
+                    <div
+                      key={viewer._id}
+                      onClick={() => {
+                        setShowViewersSheet(false);
+                        setIsSheetClosing(false);
+                        handleClose();
+                        navigate(`/${viewer.username}`);
+                      }}
+                      className="flex items-center justify-between p-2 rounded-2xl hover:bg-surface-elevated transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="h-9 w-9 rounded-full overflow-hidden border border-border bg-surface shrink-0">
+                          {viewer.avatar ? (
+                            <img src={viewer.avatar} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="h-full w-full bg-indigo text-white grid place-items-center text-xs font-bold">
+                              {(viewer.name || viewer.username || "U").charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-ink truncate">
+                            @{viewer.username}
+                          </p>
+                          <p className="text-[11px] text-text-subtle truncate">
+                            {viewer.name || ""}
+                          </p>
+                        </div>
+                      </div>
+
+                      {viewer.hasLiked && (
+                        <span className="text-rose-500">
+                          <Heart size={16} fill="currentColor" />
+                        </span>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-8 text-center text-xs text-text-subtle">
+                    No views from other users yet.
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          </>
         )}
 
       </div>

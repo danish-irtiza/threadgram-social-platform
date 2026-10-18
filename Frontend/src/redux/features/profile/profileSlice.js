@@ -16,6 +16,13 @@ const initialState = {
   vibes: [],
   vibesLoading: false,
   vibesError: null,
+  // Saved posts & vibes (owner-only)
+  savedPosts: [],
+  savedVibes: [],
+  savedPostsLoading: false,
+  savedVibesLoading: false,
+  savedPostsError: null,
+  savedVibesError: null,
 }
 
 export const fetchProfile = createAsyncThunk(
@@ -131,6 +138,38 @@ export const fetchUserVibes = createAsyncThunk(
   }
 )
 
+/**
+ * Fetch saved posts for the authenticated user (owner only).
+ * GET /api/posts/saved
+ */
+export const fetchSavedPosts = createAsyncThunk(
+  'profile/fetchSavedPosts',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get('/posts/saved')
+      return data?.data?.savedPosts || []
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || 'Failed to fetch saved posts.')
+    }
+  }
+)
+
+/**
+ * Fetch saved vibes for the authenticated user (owner only).
+ * GET /api/vibes/saved
+ */
+export const fetchSavedVibes = createAsyncThunk(
+  'profile/fetchSavedVibes',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get('/vibes/saved')
+      return data?.data?.savedVibes || []
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.message || 'Failed to fetch saved vibes.')
+    }
+  }
+)
+
 const profileSlice = createSlice({
   name: 'profile',
   initialState,
@@ -148,6 +187,12 @@ const profileSlice = createSlice({
       state.vibes = []
       state.vibesLoading = false
       state.vibesError = null
+      state.savedPosts = []
+      state.savedVibes = []
+      state.savedPostsLoading = false
+      state.savedVibesLoading = false
+      state.savedPostsError = null
+      state.savedVibesError = null
     },
     addPostToProfile: (state, action) => {
       const newPost = action.payload
@@ -188,6 +233,16 @@ const profileSlice = createSlice({
           state.profile.posts[index] = { ...state.profile.posts[index], ...updatedPost }
         }
       }
+      if (Array.isArray(state.savedPosts)) {
+        if (updatedPost.isSaved === false) {
+          state.savedPosts = state.savedPosts.filter((p) => String(p._id) !== String(updatedPost._id))
+        } else {
+          const index = state.savedPosts.findIndex((p) => String(p._id) === String(updatedPost._id))
+          if (index !== -1) {
+            state.savedPosts[index] = { ...state.savedPosts[index], ...updatedPost }
+          }
+        }
+      }
     },
     // Optimistically prepend a newly created vibe without refetching
     addVibeToProfile: (state, action) => {
@@ -208,6 +263,9 @@ const profileSlice = createSlice({
       if (state.profile) {
         state.profile.vibeCount = Math.max(0, (state.profile.vibeCount || 1) - 1)
       }
+      if (Array.isArray(state.savedVibes)) {
+        state.savedVibes = state.savedVibes.filter((v) => String(v._id) !== String(vibeId))
+      }
     },
     // Update fields of a vibe in the profile vibes list (e.g. comment count, like/save state)
     updateVibeInProfile: (state, action) => {
@@ -216,6 +274,16 @@ const profileSlice = createSlice({
         const index = state.vibes.findIndex((v) => String(v._id) === String(updatedVibe._id))
         if (index !== -1) {
           state.vibes[index] = { ...state.vibes[index], ...updatedVibe }
+        }
+      }
+      if (Array.isArray(state.savedVibes)) {
+        if (updatedVibe.isSaved === false) {
+          state.savedVibes = state.savedVibes.filter((v) => String(v._id) !== String(updatedVibe._id))
+        } else {
+          const index = state.savedVibes.findIndex((v) => String(v._id) === String(updatedVibe._id))
+          if (index !== -1) {
+            state.savedVibes[index] = { ...state.savedVibes[index], ...updatedVibe }
+          }
         }
       }
     },
@@ -439,6 +507,32 @@ const profileSlice = createSlice({
       .addCase(fetchUserVibes.rejected, (state, action) => {
         state.vibesLoading = false
         state.vibesError = action.payload || 'Failed to fetch vibes.'
+      })
+      // Saved posts (owner only)
+      .addCase(fetchSavedPosts.pending, (state) => {
+        state.savedPostsLoading = true
+        state.savedPostsError = null
+      })
+      .addCase(fetchSavedPosts.fulfilled, (state, action) => {
+        state.savedPostsLoading = false
+        state.savedPosts = action.payload
+      })
+      .addCase(fetchSavedPosts.rejected, (state, action) => {
+        state.savedPostsLoading = false
+        state.savedPostsError = action.payload || 'Failed to fetch saved posts.'
+      })
+      // Saved vibes (owner only)
+      .addCase(fetchSavedVibes.pending, (state) => {
+        state.savedVibesLoading = true
+        state.savedVibesError = null
+      })
+      .addCase(fetchSavedVibes.fulfilled, (state, action) => {
+        state.savedVibesLoading = false
+        state.savedVibes = action.payload
+      })
+      .addCase(fetchSavedVibes.rejected, (state, action) => {
+        state.savedVibesLoading = false
+        state.savedVibesError = action.payload || 'Failed to fetch saved vibes.'
       })
   },
 })

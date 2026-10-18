@@ -11,6 +11,21 @@ const {
     CLOUDINARY_API_SECRET,
 } = process.env;
 
+/**
+ * Safely removes a local temporary file from /public/uploads if it exists on disk.
+ */
+const deleteTempFile = async (filePath) => {
+    if (!filePath) return;
+    try {
+        const targetPath = typeof filePath === "string" ? filePath : filePath?.path;
+        if (targetPath && fsSync.existsSync(targetPath)) {
+            await fs.unlink(targetPath);
+        }
+    } catch (err) {
+        // Safe silent cleanup — ignore if file is missing or already removed
+    }
+};
+
 const uploadOnCloudinary = async (file) => {
     if (!file) return null;
     try {
@@ -24,17 +39,13 @@ const uploadOnCloudinary = async (file) => {
             resource_type: "auto",
         });
 
-        if (fsSync.existsSync(file)) {
-            await fs.unlink(file);
-        }
-
         return result.secure_url;
     } catch (error) {
         console.error("Cloudinary upload error:", error);
-        if (file && fsSync.existsSync(file)) {
-            await fs.unlink(file);
-        }
         return null;
+    } finally {
+        // Always delete local temporary file after Cloudinary upload attempt
+        await deleteTempFile(file);
     }
 };
 
@@ -52,10 +63,6 @@ const uploadVideoOnCloudinary = async (file) => {
             chunk_size: 6 * 1024 * 1024,
         });
 
-        if (fsSync.existsSync(file)) {
-            await fs.unlink(file);
-        }
-
         return {
             url: result.secure_url,
             duration: result.duration,
@@ -63,10 +70,10 @@ const uploadVideoOnCloudinary = async (file) => {
         };
     } catch (error) {
         console.error("Cloudinary video upload error:", error);
-        if (file && fsSync.existsSync(file)) {
-            await fs.unlink(file);
-        }
         return null;
+    } finally {
+        // Always delete local temporary file after Cloudinary upload attempt
+        await deleteTempFile(file);
     }
 };
 
@@ -85,4 +92,5 @@ const deleteFromCloudinary = async (publicId, resourceType = "video") => {
 
 module.exports = uploadOnCloudinary;
 module.exports.uploadVideoOnCloudinary = uploadVideoOnCloudinary;
-module.exports.deleteFromCloudinary = deleteFromCloudinary;
+module.exports.deleteFromCloudinary = deleteFromCloudinary;
+module.exports.deleteTempFile = deleteTempFile;

@@ -226,12 +226,13 @@ export const trimVideoFile = (sourceFile, startTime, endTime, onProgress) => {
 
       mediaRecorder.onstop = () => {
         cleanup();
-        const mime = mediaRecorder.mimeType || selectedMimeType || "video/mp4";
-        const blob = new Blob(recordedChunks, { type: mime });
-        const ext = mime.includes("webm") ? ".webm" : ".mp4";
-        const baseName = sourceFile.name.replace(/\.[^/.]+$/, "");
+        const rawMime = mediaRecorder.mimeType || selectedMimeType || "video/mp4";
+        const cleanMime = rawMime.includes("webm") ? "video/webm" : "video/mp4";
+        const blob = new Blob(recordedChunks, { type: cleanMime });
+        const ext = cleanMime.includes("webm") ? ".webm" : ".mp4";
+        const baseName = (sourceFile?.name || "video").replace(/\.[^/.]+$/, "");
         const trimmedFileName = `${baseName}_trimmed_${Math.round(startTime)}-${Math.round(endTime)}${ext}`;
-        const trimmedFile = new File([blob], trimmedFileName, { type: blob.type || "video/mp4" });
+        const trimmedFile = new File([blob], trimmedFileName, { type: cleanMime });
         resolve(trimmedFile);
       };
 
@@ -342,3 +343,48 @@ export const formatTime = (seconds) => {
   const secs = Math.floor(seconds % 60);
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 };
+
+/**
+ * Generates an image poster thumbnail URL for a video.
+ * For Cloudinary hosted videos, it replaces the video extension with .jpg and applies so_0.5 (frame at 0.5s)
+ * so browsers load a crisp image thumbnail immediately without rendering blank frames.
+ *
+ * @param {string} url - video media URL
+ * @returns {string|null} - poster image URL or null
+ */
+export const getVideoPosterUrl = (url) => {
+  if (!url || typeof url !== "string") return null;
+
+  // Cloudinary video URL
+  if (url.includes("cloudinary.com") && url.includes("/video/upload/")) {
+    let poster = url;
+    // Add start offset 0.5s if not already transformed
+    if (!poster.includes("/so_")) {
+      poster = poster.replace("/video/upload/", "/video/upload/so_0.5/");
+    }
+    // Replace video extension with .jpg
+    poster = poster.replace(/\.(mp4|mov|webm|avi|mkv|m4v|3gp|flv)(\?.*)?$/i, ".jpg$2");
+    return poster;
+  }
+
+  return null;
+};
+
+/**
+ * Checks whether a given media URL or item represents a video
+ * @param {string|object} mediaOrItem 
+ * @returns {boolean}
+ */
+export const isVideoMedia = (mediaOrItem) => {
+  if (!mediaOrItem) return false;
+  if (typeof mediaOrItem === "string") {
+    return /\.(mp4|mov|webm|avi|mkv|m4v|3gp|flv)(\?.*)?$/i.test(mediaOrItem);
+  }
+  return (
+    mediaOrItem._type === "vibe" ||
+    mediaOrItem._kind === "vibe" ||
+    mediaOrItem.mediaType === "video" ||
+    isVideoMedia(mediaOrItem.media || mediaOrItem.videoUrl || "")
+  );
+};
+

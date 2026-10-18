@@ -5,3 +5,17 @@
 
 
 i want to see the loading stte pr mene jo krwaya h wo kesa lag rha h propr testing and enchance agr zarrorat parhi 
+
+
+//story pr video loading issue video stak hojti isky bagiar
+Network Buffering Feedback: While downloading/buffering video data over the network, there was no loading indicator, giving the impression that the app was frozen. i want this if video is not loaded perfectly like chunks are stuck or internet connection disconnect so loading comming properly on videos where we use like story vibe or even in post so cearfully check this and if is it not so implement it with proper implement plan
+
+
+
+
+stryViewerModelSmjna h 
+index.css
+mediaviewer 
+postcard
+
+no in story view section its animation look like slide  and i geniuenly dont like this so make it professinal

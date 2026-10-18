@@ -102,6 +102,8 @@ export default function VibesItem({
     el.setAttribute("webkit-playsinline", "");
   }, []);
 
+  // View recording functionality — commented out for now as requested
+  /*
   useEffect(() => {
     if (!isActive || viewedRef.current) return;
     viewedRef.current = true;
@@ -112,6 +114,7 @@ export default function VibesItem({
       dispatch(recordReelView(reel._id));
     }
   }, [isActive, reel?._id, dispatch, reel?.viewsCount]);
+  */
 
   const handleLike = async () => {
     if (!currentUserId || !reel?._id || sending.like) return;
@@ -298,7 +301,7 @@ export default function VibesItem({
             className="group flex flex-col items-center text-white cursor-pointer active:scale-90 transition-transform"
             aria-label="Comments"
           >
-            <div className="p-2 rounded-full text-white group-hover:text-sky-400 transition-colors drop-shadow-lg">
+            <div className="p-2 rounded-full text-white transition-colors drop-shadow-lg">
               <MessageCircle size={26} strokeWidth={2} />
             </div>
             <span className="text-[11px] font-medium text-white drop-shadow-md -mt-1">
@@ -324,7 +327,7 @@ export default function VibesItem({
             </span>
           </button>
 
-          {/* Views */}
+          {/* Views — commented out for now as requested
           <div className="flex flex-col items-center text-white/90">
             <div className="p-2 text-white/80 drop-shadow-lg">
               <Eye size={24} strokeWidth={2} />
@@ -333,6 +336,7 @@ export default function VibesItem({
               {formatCount(reel?.viewsCount ?? 0)}
             </span>
           </div>
+          */}
         </div>
 
       </div>

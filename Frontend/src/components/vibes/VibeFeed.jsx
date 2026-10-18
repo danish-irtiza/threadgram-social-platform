@@ -108,7 +108,9 @@ export default function VibeFeed() {
               </div>
               <p className="text-[14px] font-semibold mb-1">Couldn't load vibes</p>
               <p className="text-[12px] text-white/70 mb-4">
-                {String(error || "Something went wrong.")}
+                {error && !/token|jwt|auth|unauthorized/i.test(String(error))
+                  ? String(error)
+                  : "Unable to load this Reel. Please try again."}
               </p>
               <button
                 type="button"

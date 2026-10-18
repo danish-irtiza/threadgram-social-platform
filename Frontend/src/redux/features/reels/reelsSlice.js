@@ -26,7 +26,12 @@ export const fetchReels = createAsyncThunk(
         pagination: data?.data?.pagination || { page: 1, limit, hasMore: false, total: 0 },
       }
     } catch (error) {
-      return rejectWithValue(error?.response?.data?.message || 'Failed to load reels.')
+      console.error('[fetchReels error]:', error?.response?.data || error?.message || error)
+      const rawMessage = error?.response?.data?.message
+      if (!rawMessage || /token|jwt|auth|unauthorized/i.test(rawMessage) || error?.response?.status === 401) {
+        return rejectWithValue('Unable to load this Reel. Please try again.')
+      }
+      return rejectWithValue(rawMessage || 'Unable to load this Reel. Please try again.')
     }
   }
 )
@@ -48,7 +53,12 @@ export const fetchMoreReels = createAsyncThunk(
         pagination: data?.data?.pagination || { page: nextPage, limit, hasMore: false, total: state.total },
       }
     } catch (error) {
-      return rejectWithValue(error?.response?.data?.message || 'Failed to load more reels.')
+      console.error('[fetchMoreReels error]:', error?.response?.data || error?.message || error)
+      const rawMessage = error?.response?.data?.message
+      if (!rawMessage || /token|jwt|auth|unauthorized/i.test(rawMessage) || error?.response?.status === 401) {
+        return rejectWithValue('Unable to load this Reel. Please try again.')
+      }
+      return rejectWithValue(rawMessage || 'Unable to load this Reel. Please try again.')
     }
   }
 )

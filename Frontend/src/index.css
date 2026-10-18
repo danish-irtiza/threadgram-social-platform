@@ -419,3 +419,127 @@ select:autofill {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(107, 91, 255, 0.7);
 }
+
+/* ========================================================
+   MODAL & BOTTOM SHEET POLISHED TRANSITION ANIMATIONS
+   ======================================================== */
+
+@keyframes sheetSlideUp {
+  0% {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes sheetSlideDown {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+}
+
+@keyframes sheetBackdropIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes sheetBackdropOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes modalFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes modalFadeOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes modalPopIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalPopOut {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+
+.animate-sheet-slide-in {
+  animation: sheetSlideUp 260ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-sheet-slide-out {
+  animation: sheetSlideDown 220ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-sheet-backdrop-in {
+  animation: sheetBackdropIn 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity;
+}
+
+.animate-sheet-backdrop-out {
+  animation: sheetBackdropOut 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: opacity;
+}
+
+.animate-modal-fade-in {
+  animation: modalFadeIn 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity;
+}
+
+.animate-modal-fade-out {
+  animation: modalFadeOut 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: opacity;
+}
+
+.animate-modal-pop-in {
+  animation: modalPopIn 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+.animate-modal-pop-out {
+  animation: modalPopOut 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  will-change: transform, opacity;
+}

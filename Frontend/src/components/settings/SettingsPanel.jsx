@@ -5,6 +5,7 @@ import {
   Lock,
   Bell,
   Bookmark,
+  Palette,
   LogOut,
   ChevronRight,
   Shield,
@@ -13,6 +14,7 @@ import AccountSettings from "./AccountSettings.jsx";
 import PrivacySettings from "./PrivacySettings.jsx";
 import NotificationSettings from "./NotificationSettings.jsx";
 import SavedPostsSettings from "./SavedPostsSettings.jsx";
+import AppearanceSettings from "./AppearanceSettings.jsx";
 import LogoutSetting from "./LogoutSetting.jsx";
 
 const SETTING_TABS = [
@@ -20,6 +22,7 @@ const SETTING_TABS = [
   { id: "privacy", label: "Privacy Settings", icon: Lock, component: PrivacySettings },
   { id: "notifications", label: "Notifications", icon: Bell, component: NotificationSettings },
   { id: "saved", label: "Saved Posts", icon: Bookmark, component: SavedPostsSettings },
+  { id: "appearance", label: "Appearance", icon: Palette, component: AppearanceSettings },
   { id: "logout", label: "Logout", icon: LogOut, component: LogoutSetting, isDanger: true },
 ];
 
@@ -127,7 +130,7 @@ export default function SettingsPanel({ isOpen, onClose, initialTab = "account" 
             type="button"
             onClick={onClose}
             aria-label="Close settings"
-            className="hidden md:grid cursor-pointer absolute top-4 right-4 z-10 h-8 w-8 place-items-center rounded-full border border-border bg-surface-elevated/70 text-ink hover:bg-overlay hover:scale-105 active:scale-95 transition-all"
+            className="hidden md:grid cursor-pointer absolute top-4 right-4 z-10 h-8 w-8 place-items-center rounded-full border border-border bg-surface-elevated/70 text-ink hover:bg-overlay transition-colors"
           >
             <X size={16} />
           </button>

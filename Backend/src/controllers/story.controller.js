@@ -3,6 +3,7 @@ const Story = require("../models/stories.model");
 const User = require("../models/user.model");
 const Follow = require("../models/follow.model");
 const uploadOnCloudinary = require("../config/cloudinary");
+const { uploadVideoOnCloudinary, deleteFromCloudinary, deleteTempFile } = require("../config/cloudinary");
 const { createStorySchema } = require("../validators/story.validators");
 
 const extractValidationErrors = (error) => {
@@ -82,12 +83,18 @@ const createStory = async (req, res) => {
       });
     }
 
-    // Determine mediaType automatically from MIME type unless explicitly valid in body
+    // Determine mediaType automatically from MIME type or file extension
     const mime = file.mimetype || "";
+    const originalName = file.originalname || "";
+    const videoExtPattern = /\.(mp4|mov|avi|mkv|webm|m4v|3gp|wmv|flv)$/i;
+    const imageExtPattern = /\.(jpg|jpeg|png|webp|gif|bmp)$/i;
+
     let mediaType = "image";
-    if (mime.startsWith("video/")) {
+    if (mime.startsWith("video/") || videoExtPattern.test(originalName)) {
       mediaType = "video";
-    } else if (!mime.startsWith("image/")) {
+    } else if (mime.startsWith("image/") || imageExtPattern.test(originalName)) {
+      mediaType = "image";
+    } else {
       return res.status(400).json({
         status: "fail",
         message: "Only image and video files are supported for stories",
@@ -106,13 +113,32 @@ const createStory = async (req, res) => {
       });
     }
 
-    // Upload to Cloudinary
-    const mediaUrl = await uploadOnCloudinary(file.path);
-    if (!mediaUrl) {
-      return res.status(500).json({
-        status: "error",
-        message: "Failed to upload story media to Cloudinary",
-      });
+    // Upload to Cloudinary with duration check for videos
+    let mediaUrl;
+    if (mediaType === "video") {
+      const uploadResult = await uploadVideoOnCloudinary(file.path);
+      if (!uploadResult || !uploadResult.url) {
+        return res.status(500).json({
+          status: "error",
+          message: "Failed to upload story video to Cloudinary",
+        });
+      }
+      if (uploadResult.duration && uploadResult.duration > 61.5) {
+        await deleteFromCloudinary(uploadResult.public_id, "video");
+        return res.status(400).json({
+          status: "fail",
+          message: "Story videos must be 60 seconds or shorter.",
+        });
+      }
+      mediaUrl = uploadResult.url;
+    } else {
+      mediaUrl = await uploadOnCloudinary(file.path);
+      if (!mediaUrl) {
+        return res.status(500).json({
+          status: "error",
+          message: "Failed to upload story media to Cloudinary",
+        });
+      }
     }
 
     // Create Story in DB
@@ -143,6 +169,11 @@ const createStory = async (req, res) => {
       status: "error",
       message: error && error.message ? error.message : "Something went wrong while creating story.",
     });
+  } finally {
+    const file = req.file || (req.files && req.files[0]);
+    if (file) {
+      await deleteTempFile(file.path);
+    }
   }
 };
 
@@ -206,15 +237,19 @@ const getFeedStories = async (req, res) => {
         (lId) => lId.toString() === userId.toString()
       );
 
+      const nonAuthorViewers = Array.isArray(story.viewers)
+        ? story.viewers.filter((vId) => vId.toString() !== story.author._id.toString())
+        : [];
+
       const formattedStory = {
         ...story,
         isViewed: isViewedByCurrentUser,
         isLiked: isLikedByCurrentUser,
-        viewsCount: Array.isArray(story.viewers) ? story.viewers.length : 0,
+        viewsCount: nonAuthorViewers.length,
         likesCount: Array.isArray(story.like) ? story.like.length : 0,
       };
 
-      if (!isViewedByCurrentUser && authorIdStr !== userId.toString()) {
+      if (!isViewedByCurrentUser) {
         group.hasUnseen = true;
       }
 
@@ -313,11 +348,15 @@ const getUserStories = async (req, res) => {
         (lId) => lId.toString() === currentUserId.toString()
       );
 
+      const nonAuthorViewers = Array.isArray(story.viewers)
+        ? story.viewers.filter((vId) => vId.toString() !== userId.toString())
+        : [];
+
       return {
         ...story,
         isViewed: !!isViewed,
         isLiked: !!isLiked,
-        viewsCount: Array.isArray(story.viewers) ? story.viewers.length : 0,
+        viewsCount: nonAuthorViewers.length,
         likesCount: Array.isArray(story.like) ? story.like.length : 0,
       };
     });
@@ -395,11 +434,15 @@ const getStoryById = async (req, res) => {
       (lId) => lId.toString() === currentUserId.toString()
     );
 
+    const nonAuthorViewers = Array.isArray(story.viewers)
+      ? story.viewers.filter((vId) => vId.toString() !== story.author._id.toString())
+      : [];
+
     const formattedStory = {
       ...story,
       isViewed: !!isViewed,
       isLiked: !!isLiked,
-      viewsCount: Array.isArray(story.viewers) ? story.viewers.length : 0,
+      viewsCount: nonAuthorViewers.length,
       likesCount: Array.isArray(story.like) ? story.like.length : 0,
     };
 
@@ -462,12 +505,10 @@ const markStoryAsViewed = async (req, res) => {
       });
     }
 
-    // Do not record author as a viewer of their own story
-    if (story.author.toString() !== userId.toString()) {
-      await Story.findByIdAndUpdate(storyId, {
-        $addToSet: { viewers: userId },
-      });
-    }
+    // Always record viewer in DB (including author viewing their own story for viewed state persistence)
+    await Story.findByIdAndUpdate(storyId, {
+      $addToSet: { viewers: userId },
+    });
 
     return res.status(200).json({
       status: "success",
@@ -665,10 +706,13 @@ const getStoryViewers = async (req, res) => {
 
     const likesSet = new Set((story.like || []).map((id) => id.toString()));
 
-    const viewersWithLikeStatus = (story.viewers || []).map((viewer) => ({
-      ...viewer.toObject(),
-      hasLiked: likesSet.has(viewer._id.toString()),
-    }));
+    // Exclude story author from "Seen by" viewer list
+    const viewersWithLikeStatus = (story.viewers || [])
+      .filter((viewer) => viewer._id.toString() !== userId.toString())
+      .map((viewer) => ({
+        ...viewer.toObject(),
+        hasLiked: likesSet.has(viewer._id.toString()),
+      }));
 
     return res.status(200).json({
       status: "success",

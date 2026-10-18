@@ -5,6 +5,7 @@ const Post = require("../models/post.model")
 const Vibe = require("../models/vibe.model")
 const { editProfileSchema } = require("../validators/auth.validators")
 const uploadOnCloudinary = require("../config/cloudinary.js")
+const { deleteTempFile } = require("../config/cloudinary.js")
 
 const extractValidationErrors = (error) => {
   const errors = {}
@@ -549,6 +550,10 @@ const editProfile = async (req, res) => {
           ? error.message
           : "Something went wrong while updating profile.",
     })
+  } finally {
+    if (req.file) {
+      await deleteTempFile(req.file.path)
+    }
   }
 }
 

@@ -68,9 +68,7 @@ export function MediaAvatar({ src, size = 34, className, onClick }) {
       {src ? (
         <img src={src} alt="" className="h-full w-full object-cover" draggable={false} />
       ) : (
-        <div className="h-full w-full flex items-center justify-center bg-indigo-soft">
-          <span className="text-indigo font-semibold" style={{ fontSize: size * 0.38 }}>?</span>
-        </div>
+        <div className="h-full w-full bg-indigo-soft" />
       )}
     </div>
   );
@@ -390,6 +388,7 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
   const [commentText, setCommentText] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
   const [toast, setToast] = useState(null);
+  const [isClosing, setIsClosing] = useState(false);
 
   const commentInputRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -400,6 +399,24 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
 
   const showToast = useCallback((message, type = "error") => setToast({ message, type }), []);
   const dismissToast = useCallback(() => setToast(null), []);
+
+  const handleAnimatedClose = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setTimeout(() => {
+      onClose();
+    }, 180);
+  }, [isClosing, onClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        handleAnimatedClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleAnimatedClose]);
 
   useEffect(() => {
     const origOverflow = document.body.style.overflow;
@@ -511,8 +528,23 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
   const authorUsername = content?.author?.username;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-0 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200 select-none">
-      <div className="relative w-full h-full sm:h-[85vh] sm:max-w-lg rounded-none sm:rounded-2xl border-0 sm:border border-border/80 bg-paper shadow-xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleAnimatedClose();
+        }
+      }}
+      className={cn(
+        "fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-0 sm:p-4 backdrop-blur-sm select-none",
+        isClosing ? "animate-modal-fade-out" : "animate-modal-fade-in"
+      )}
+    >
+      <div
+        className={cn(
+          "relative w-full h-full sm:h-[85vh] sm:max-w-lg rounded-none sm:rounded-2xl border-0 sm:border border-border/80 bg-paper shadow-xl overflow-hidden flex flex-col",
+          isClosing ? "animate-modal-pop-out" : "animate-modal-pop-in"
+        )}
+      >
         
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border/40 bg-surface/50 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -529,7 +561,7 @@ export function CommentsModal({ contentId, content, commentsCount: initialCount,
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleAnimatedClose}
             className="grid h-8 w-8 place-items-center rounded-full text-muted hover:text-ink hover:bg-overlay cursor-pointer transition-colors"
             aria-label="Close comments"
           >

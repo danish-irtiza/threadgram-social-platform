@@ -17,6 +17,7 @@ import {
   Loader2,
   UserMinus,
   ChevronDown,
+  Bookmark,
 } from "lucide-react";
 import StoryViewerModal from "@components/story/StoryViewerModal.jsx";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -32,6 +33,8 @@ import {
   fetchFollowers,
   fetchFollowing,
   fetchUserVibes,
+  fetchSavedPosts,
+  fetchSavedVibes,
 } from "@/redux/features/profile/profileSlice.js";
 import {
   logout as logoutThunk,
@@ -47,6 +50,7 @@ import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg
 import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
 import PostCard from "@/components/post/PostCard.jsx";
 import VibeCard from "@/components/post/VibeCard.jsx";
+import SavedPostsFeedModal from "@/components/post/SavedPostsFeedModal.jsx";
 import AuthPromptModal from "@/components/model/AuthPromptModal.jsx";
 import UnfollowConfirmModal from "@/components/model/UnfollowConfirmModal.jsx";
 import Button from "@/components/ui/Button.jsx";
@@ -351,9 +355,22 @@ const DESKTOP_TABS = [
   { id: "vibes", label: "Vibes", Icon: Film, countKey: "videosCount" },
 ];
 
+const DESKTOP_TABS_OWNER = [
+  { id: "posts", label: "Posts", Icon: Grid3x3, countKey: "postCount" },
+  { id: "photos", label: "Photos", Icon: Grid3x3, countKey: "photosCount" },
+  { id: "vibes", label: "Vibes", Icon: Film, countKey: "videosCount" },
+  { id: "saved", label: "Saved", Icon: Bookmark, countKey: null },
+];
+
 const MOBILE_TABS = [
   { id: "posts", label: "Posts", Icon: Grid3x3 },
   { id: "vibes", label: "Vibes", Icon: Film },
+];
+
+const MOBILE_TABS_OWNER = [
+  { id: "posts", label: "Posts", Icon: Grid3x3 },
+  { id: "vibes", label: "Vibes", Icon: Film },
+  { id: "saved", label: "Saved", Icon: Bookmark },
 ];
 
 
@@ -376,10 +393,13 @@ export default function ProfilePage() {
     (s) => s.profile || {}
   );
 
-  const { vibes, vibesLoading } = useSelector((s) => s.profile || {});
+  const { vibes, vibesLoading, savedPosts, savedVibes, savedPostsLoading, savedVibesLoading } = useSelector((s) => s.profile || {});
 
   const [desktopTab, setDesktopTab] = useState("posts");
   const [mobileTab, setMobileTab] = useState("posts");
+  const [savedFilter, setSavedFilter] = useState("all");
+  const [isSavedFeedOpen, setIsSavedFeedOpen] = useState(false);
+  const [selectedSavedIndex, setSelectedSavedIndex] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("profile");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -480,12 +500,30 @@ export default function ProfilePage() {
     return all;
   }, [profile, mobileTab]);
 
+  const combinedSaved = useMemo(() => {
+    const posts = (Array.isArray(savedPosts) ? savedPosts : []).map((p) => ({ ...p, _kind: "post" }));
+    const vList = (Array.isArray(savedVibes) ? savedVibes : []).map((v) => ({ ...v, _kind: "vibe" }));
+    let list = [...posts, ...vList];
+    list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    if (savedFilter === "posts") return list.filter((i) => i._kind === "post");
+    if (savedFilter === "vibes") return list.filter((i) => i._kind === "vibe");
+    return list;
+  }, [savedPosts, savedVibes, savedFilter]);
+
   // When the Vibes tab is activated, lazy-fetch vibes for this profile
   useEffect(() => {
     if ((desktopTab === "vibes" || mobileTab === "vibes") && profile?._id) {
       dispatch(fetchUserVibes(profile._id));
     }
   }, [desktopTab, mobileTab, profile?._id, dispatch]);
+
+  // When the Saved tab is activated (owner only), lazy-fetch saved posts & vibes
+  useEffect(() => {
+    if ((desktopTab === "saved" || mobileTab === "saved") && isOwner) {
+      dispatch(fetchSavedPosts());
+      dispatch(fetchSavedVibes());
+    }
+  }, [desktopTab, mobileTab, isOwner, dispatch]);
 
   const tabCount = (tabId) => {
     if (!profile) return 0;
@@ -498,6 +536,11 @@ export default function ProfilePage() {
         : Number.isFinite(profile.videosCount)
           ? profile.videosCount
           : 0;
+    }
+    if (tabId === "saved") {
+      const postsCount = Array.isArray(savedPosts) ? savedPosts.length : 0;
+      const vibesCount = Array.isArray(savedVibes) ? savedVibes.length : 0;
+      return postsCount + vibesCount;
     }
     const key = DESKTOP_TABS.find((t) => t.id === tabId)?.countKey;
     if (!key) return profile.postCount || 0;
@@ -894,9 +937,8 @@ export default function ProfilePage() {
                       ) : null}
                       <div
                         className={cn(
-                          "mt-4 grid max-w-[260px] grid-cols-2 gap-2 rounded-xl border border-border bg-surface/60 p-3"
+                          "mt-4 grid max-w-[260px] grid-cols-2 gap-2 rounded-xl border border-border bg-surface/60 p-3 shadow-none"
                         )}
-                        style={{ boxShadow: shadow.sm }}
                       >
                         <button
                           type="button"
@@ -954,20 +996,19 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              <div className="pt-2 flex flex-col items-end gap-3 min-w-[180px]">
+              <div className="pt-2 flex items-center justify-end gap-2">
                 {isLoading ? (
-                  <Skeleton className="h-10 w-40 rounded-xl" />
+                  <Skeleton className="h-10 w-10 rounded-xl" />
                 ) : isOwner ? (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      onClick={handleOpenSettings}
-                    >
-                      <SettingsIcon size={16} strokeWidth={2} />
-                      <span>Settings</span>
-                    </Button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleOpenSettings}
+                    title="Settings"
+                    aria-label="Settings"
+                    className="grid h-10 w-10 place-items-center rounded-xl border border-border bg-surface/60 text-ink hover:bg-surface-elevated hover:text-indigo hover:border-border-strong active:scale-95 transition-all duration-150 cursor-pointer shadow-none"
+                  >
+                    <SettingsIcon size={19} strokeWidth={2} />
+                  </button>
                 ) : profile ? (
                   <div className="flex items-center gap-2">
                     <Button
@@ -1094,15 +1135,15 @@ export default function ProfilePage() {
                   ) : null}
                   <div className="mt-4 flex items-center gap-2">
                     {isOwner ? (
-                      <Button
-                        variant="secondary"
-                        size="md"
+                      <button
+                        type="button"
                         onClick={handleOpenSettings}
-                        className="flex-1"
+                        title="Settings"
+                        aria-label="Settings"
+                        className="grid h-10 w-full place-items-center rounded-xl border border-border bg-surface/60 text-ink hover:bg-surface-elevated hover:text-indigo active:scale-[0.98] transition-all cursor-pointer shadow-none"
                       >
-                        <SettingsIcon size={16} strokeWidth={2} />
-                        <span>Settings</span>
-                      </Button>
+                        <SettingsIcon size={19} strokeWidth={2} />
+                      </button>
                     ) : (
                       <>
                         <Button
@@ -1158,14 +1199,17 @@ export default function ProfilePage() {
           {/* Tabs - Desktop */}
           <div className="hidden lg:block mt-2 border-t border-border pt-3">
             <div className="flex items-center gap-2 px-1 flex-wrap">
-              {DESKTOP_TABS.map(({ id, label, countKey }) => {
+              {(isOwner ? DESKTOP_TABS_OWNER : DESKTOP_TABS).map(({ id, label, countKey }) => {
                 const active = desktopTab === id;
                 const count = tabCount(id);
                 return (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setDesktopTab(id)}
+                    onClick={() => {
+                      setDesktopTab(id);
+                      setMobileTab(id === "photos" ? "posts" : id);
+                    }}
                     className={cn(
                       "relative flex items-center gap-2 rounded-xl px-4 h-10 transition-all duration-120 ease-out active:scale-[0.98]",
                       active
@@ -1206,14 +1250,17 @@ export default function ProfilePage() {
 
           {/* Tabs - Mobile */}
           <div className="lg:hidden mt-5 border-t border-border">
-            <div className="grid grid-cols-2">
-              {MOBILE_TABS.map(({ id, label, Icon }) => {
+            <div className={cn("grid", isOwner ? "grid-cols-3" : "grid-cols-2")}>
+              {(isOwner ? MOBILE_TABS_OWNER : MOBILE_TABS).map(({ id, label, Icon }) => {
                 const active = mobileTab === id;
                 return (
                   <button
                     key={id}
                     type="button"
-                    onClick={() => setMobileTab(id)}
+                    onClick={() => {
+                      setMobileTab(id);
+                      setDesktopTab(id);
+                    }}
                     aria-pressed={active}
                     className={cn(
                       "relative h-12 flex items-center justify-center gap-2 transition-all duration-120 ease-out",
@@ -1316,6 +1363,120 @@ export default function ProfilePage() {
                       : handleFollowToggle
                 }
               />
+            ) : (isOwner && (desktopTab === "saved" || mobileTab === "saved")) ? (
+              (savedPostsLoading || savedVibesLoading) ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="rounded-xl overflow-hidden border border-border bg-surface/40">
+                      <Skeleton className="h-[240px] w-full rounded-none" />
+                      <Skeleton className="mx-3 my-3 h-8 rounded-full w-32" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Saved filter pills */}
+                  <div className="flex items-center gap-2 pb-1 flex-wrap">
+                    {[
+                      { id: "all", label: "All Saved", count: (savedPosts?.length || 0) + (savedVibes?.length || 0) },
+                      { id: "posts", label: "Posts", count: savedPosts?.length || 0 },
+                      { id: "vibes", label: "Vibes", count: savedVibes?.length || 0 },
+                    ].map((tab) => {
+                      const isActive = savedFilter === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setSavedFilter(tab.id)}
+                          className={cn(
+                            "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                            isActive
+                              ? "bg-indigo text-white shadow-sm"
+                              : "bg-surface border border-border text-muted hover:text-ink hover:bg-overlay"
+                          )}
+                        >
+                          <span>{tab.label}</span>
+                          <span
+                            className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded-full",
+                              isActive
+                                ? "bg-white/20 text-white"
+                                : "bg-overlay-hover text-muted"
+                            )}
+                          >
+                            {tab.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {combinedSaved.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
+                      {combinedSaved.map((item, index) => {
+                        if (item._kind === "vibe") {
+                          const idx = (savedVibes || []).findIndex((v) => v._id === item._id);
+                          return (
+                            <VibeCard
+                              key={`saved-vibe-${item._id}`}
+                              vibe={item}
+                              vibesList={savedVibes || []}
+                              vibeIndex={idx >= 0 ? idx : 0}
+                              onMediaClick={() => {
+                                setSelectedSavedIndex(index);
+                                setIsSavedFeedOpen(true);
+                              }}
+                            />
+                          );
+                        }
+                        const pIdx = (savedPosts || []).findIndex((p) => p._id === item._id);
+                        return (
+                          <PostCard
+                            key={`saved-post-${item._id}`}
+                            post={item}
+                            postsList={savedPosts || []}
+                            postIndex={pIdx >= 0 ? pIdx : 0}
+                            onMediaClick={() => {
+                              setSelectedSavedIndex(index);
+                              setIsSavedFeedOpen(true);
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<Bookmark size={22} strokeWidth={2} />}
+                      title={
+                        savedFilter === "posts"
+                          ? "No saved posts"
+                          : savedFilter === "vibes"
+                          ? "No saved vibes"
+                          : "No saved items yet"
+                      }
+                      subtitle={
+                        savedFilter === "posts"
+                          ? "Posts you save will appear here."
+                          : savedFilter === "vibes"
+                          ? "Vibes you save will appear here."
+                          : "Save posts and vibes to view them later. Only you can see what you've saved."
+                      }
+                    />
+                  )}
+
+                  {/* Fullscreen Vertical Scrolling Saved Posts Viewer */}
+                  <SavedPostsFeedModal
+                    isOpen={isSavedFeedOpen}
+                    initialIndex={selectedSavedIndex}
+                    items={combinedSaved}
+                    onClose={() => {
+                      setIsSavedFeedOpen(false);
+                      dispatch(fetchSavedPosts());
+                      dispatch(fetchSavedVibes());
+                    }}
+                  />
+                </div>
+              )
             ) : (desktopTab === "vibes" || mobileTab === "vibes") ? (
               vibesLoading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">

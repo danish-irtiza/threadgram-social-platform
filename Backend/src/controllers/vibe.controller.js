@@ -3,7 +3,7 @@ const Vibe = require("../models/vibe.model");
 const User = require("../models/user.model");
 const Follow = require("../models/follow.model");
 const uploadOnCloudinary = require("../config/cloudinary");
-const { uploadVideoOnCloudinary, deleteFromCloudinary } = require("../config/cloudinary");
+const { uploadVideoOnCloudinary, deleteFromCloudinary, deleteTempFile } = require("../config/cloudinary");
 const {
   createVibeSchema,
   editVibeSchema,
@@ -165,6 +165,11 @@ const createVibe = async (req, res) => {
       status: "error",
       message: error && error.message ? error.message : "Something went wrong while creating vibe.",
     });
+  } finally {
+    const file = req.file || (req.files && req.files[0]);
+    if (file) {
+      await deleteTempFile(file.path);
+    }
   }
 };
 
@@ -696,7 +701,8 @@ const getSavedVibes = async (req, res) => {
       });
     }
 
-    const formattedVibes = (user.savedVibes || []).map((vibe) =>
+    const validVibes = (user.savedVibes || []).filter((vibe) => vibe != null && vibe._id);
+    const formattedVibes = validVibes.map((vibe) =>
       formatVibe(vibe.toObject ? vibe.toObject() : vibe, userId)
     );
 

@@ -13,9 +13,11 @@ import {
 import { useSelector, useDispatch } from "react-redux";
 import { addPostToProfile, addVibeToProfile } from "@/redux/features/profile/profileSlice.js";
 import { addCreatedStoryToFeed } from "@/redux/features/story/storySlice.js";
+import { prependFeedPost } from "@/redux/features/feed/feedSlice.js";
 import api from "@/api/axios";
-import { getVideoDuration, MAX_VIBE_DURATION } from "@/utils/videoUtils";
+import { getVideoDuration, trimVideoFile, MAX_VIBE_DURATION } from "@/utils/videoUtils";
 import VideoTrimmer from "@/components/ui/VideoTrimmer";
+import InlineVideoTrimmer from "@/components/ui/InlineVideoTrimmer";
 import { Avatar } from "@/components/home/HomeLeftSidebar";
 import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
 import { cn } from "@/lib/utils";
@@ -47,6 +49,10 @@ export default function CreateContentModal({
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
+  const [isTrimmingVideo, setIsTrimmingVideo] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -94,6 +100,10 @@ export default function CreateContentModal({
     setSuccessMsg(null);
     setUploadProgress(0);
     setShowDiscardConfirm(false);
+    setVideoDuration(0);
+    setTrimStart(0);
+    setTrimEnd(0);
+    setIsTrimmingVideo(false);
   };
 
   const handleClose = () => {
@@ -163,22 +173,27 @@ export default function CreateContentModal({
 
     setSelectedFile(file);
 
-    // If Vibe & video, check duration BEFORE setting preview step
-    if (contentType === "vibe" && isVid) {
+    if (isVid) {
       try {
-        const duration = await getVideoDuration(file);
-        if (duration > MAX_VIBE_DURATION) {
-          setError("Vibe video duration cannot exceed 60 seconds. Please trim your video.");
-          setStep(1.5);
-          return;
-        } else {
-          setError(null);
-          setStep(1);
-          return;
+        const dur = await getVideoDuration(file);
+        setVideoDuration(dur);
+        setTrimStart(0);
+        setTrimEnd(dur);
+
+        if ((contentType === "story" || contentType === "vibe") && dur > 60) {
+          setError(
+            contentType === "story"
+              ? "Story videos must be 60 seconds or shorter."
+              : "Vibe videos must be 60 seconds or shorter."
+          );
         }
       } catch (err) {
-        console.warn("Could not read video duration automatically:", err);
+        console.warn("Could not read video duration:", err);
       }
+    } else {
+      setVideoDuration(0);
+      setTrimStart(0);
+      setTrimEnd(0);
     }
 
     setStep(1);
@@ -228,26 +243,43 @@ export default function CreateContentModal({
     setError(null);
     setUploadProgress(0);
 
-    if (contentType === "vibe" && selectedFile.type.startsWith("video/")) {
-      console.log(`[Publish Vibe Flow 2/7] Validating video duration...`);
+    let finalUploadFile = selectedFile;
+
+    // Perform video trim if needed for story/vibe/post video uploads
+    if (
+      selectedFile.type.startsWith("video/") &&
+      (videoDuration > 60 || trimStart > 0 || (trimEnd > 0 && trimEnd < videoDuration - 0.5))
+    ) {
+      const targetEnd = trimEnd > 0 ? trimEnd : Math.min(videoDuration, 60);
+      const clipLength = targetEnd - trimStart;
+
+      if (clipLength > 60.5) {
+        setIsSubmitting(false);
+        setError("Story videos must be 60 seconds or shorter.");
+        return;
+      }
+
       try {
-        const duration = await getVideoDuration(selectedFile);
-        console.log(`[Publish Vibe Flow 3/7] Video duration check result: ${duration}s`);
-        if (duration > MAX_VIBE_DURATION + 0.5) {
-          console.warn(`[Publish Vibe Flow WARN] Duration (${duration}s) exceeds ${MAX_VIBE_DURATION}s. Redirecting to trimmer.`);
-          setIsSubmitting(false);
-          setError("Vibe video duration cannot exceed 60 seconds. Please trim your video.");
-          setStep(1.5);
-          return;
-        }
-      } catch (err) {
-        console.warn(`[Publish Vibe Flow WARN] Could not check duration, proceeding with upload:`, err);
+        setIsTrimmingVideo(true);
+        finalUploadFile = await trimVideoFile(
+          selectedFile,
+          trimStart,
+          targetEnd,
+          (progress) => setUploadProgress(progress)
+        );
+        setIsTrimmingVideo(false);
+      } catch (trimErr) {
+        console.error("Video trim failed during submit:", trimErr);
+        setIsTrimmingVideo(false);
+        setIsSubmitting(false);
+        setError("Failed to trim video clip. Please try selecting a shorter clip.");
+        return;
       }
     }
 
     try {
       const formData = new FormData();
-      formData.append("media", selectedFile);
+      formData.append("media", finalUploadFile);
       if (contentType !== "story") {
         formData.append("caption", caption.trim());
       }
@@ -275,10 +307,11 @@ export default function CreateContentModal({
         `${contentType.charAt(0).toUpperCase() + contentType.slice(1)} published successfully!`
       );
 
-      // Immediately push new content into the profile Redux store
+      // Immediately push new content into the profile and feed Redux store
       if (contentType === "post" && res.data?.data?.post) {
-        console.log(`[Publish ${contentType} Flow 7/7] Dispatching addPostToProfile.`);
+        console.log(`[Publish ${contentType} Flow 7/7] Dispatching addPostToProfile and prependFeedPost.`);
         dispatch(addPostToProfile(res.data.data.post));
+        dispatch(prependFeedPost(res.data.data.post));
       }
       if (contentType === "vibe" && res.data?.data?.vibe) {
         console.log(`[Publish ${contentType} Flow 7/7] Dispatching addVibeToProfile.`);
@@ -461,11 +494,30 @@ export default function CreateContentModal({
                     )}
                   </div>
 
+                  {/* Inline Video Trimmer / Duration Adjuster */}
+                  {isVideo && videoDuration > 0 && (
+                    <div className="w-full max-w-[420px]">
+                      <InlineVideoTrimmer
+                        duration={videoDuration}
+                        startTime={trimStart}
+                        endTime={trimEnd}
+                        maxDuration={60}
+                        onTimeChange={({ start, end }) => {
+                          setTrimStart(start);
+                          setTrimEnd(end);
+                          if (end - start <= 60 && error?.includes("60 seconds")) {
+                            setError(null);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                      className="rounded-xl bg-white hover:bg-surface-elevated text-[#C62828] border-2 border-[#C62828] px-4 py-2 text-xs font-black shadow-sm transition-all active:scale-[0.98] cursor-pointer"
+                      className="rounded-xl bg-surface hover:bg-surface-elevated text-ink px-4 py-2 text-xs font-semibold shadow-sm transition-all active:scale-[0.98] cursor-pointer"
                     >
                       Change Media
                     </button>
@@ -587,9 +639,13 @@ export default function CreateContentModal({
                       <>
                         <Loader2 size={16} className="animate-spin" />
                         <span>
-                          {uploadProgress < 100
-                            ? `Uploading... ${uploadProgress}%`
-                            : `Publishing ${currentTypeLabel}...`}
+                          {isVideo
+                            ? uploadProgress > 0 && uploadProgress < 100
+                              ? `Publishing Video (${uploadProgress}%)...`
+                              : "Publishing Video..."
+                            : uploadProgress < 100
+                              ? `Uploading... ${uploadProgress}%`
+                              : `Publishing ${currentTypeLabel}...`}
                         </span>
                       </>
                     ) : (

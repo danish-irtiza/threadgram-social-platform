@@ -3,6 +3,7 @@ import authReducer from '../features/auth/authSlice.js'
 import profileReducer from '../features/profile/profileSlice.js'
 import reelsReducer from '../features/reels/reelsSlice.js'
 import storyReducer from '../features/story/storySlice.js'
+import feedReducer from '../features/feed/feedSlice.js'
 
 export const store = configureStore({
   reducer: {
@@ -10,6 +11,7 @@ export const store = configureStore({
     profile: profileReducer,
     reels: reelsReducer,
     story: storyReducer,
+    feed: feedReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

@@ -7,6 +7,7 @@ import { useSelector, useDispatch } from "react-redux";
 import { cn } from "@/lib/utils";
 import api from "@/api/axios";
 import { removeVibeFromProfile, updateVibeInProfile } from "@/redux/features/profile/profileSlice.js";
+import { getVideoPosterUrl } from "@/utils/videoUtils.js";
 import {
   FullscreenMediaViewer,
   CommentsModal,
@@ -32,7 +33,7 @@ function timeAgo(date) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export default function VibeCard({ vibe: initialVibe, vibesList, vibeIndex = 0 }) {
+export default function VibeCard({ vibe: initialVibe, vibesList, vibeIndex = 0, onMediaClick }) {
   const currentUser = useSelector((s) => s.auth?.user);
   const currentUserId = currentUser?._id;
   const dispatch = useDispatch();
@@ -231,12 +232,19 @@ export default function VibeCard({ vibe: initialVibe, vibesList, vibeIndex = 0 }
         <div
           className="relative w-full bg-black overflow-hidden cursor-pointer"
           style={{ aspectRatio: "9/16", maxHeight: 320 }}
-          onClick={handleOpenFullscreen}
+          onClick={() => {
+            if (onMediaClick) {
+              onMediaClick();
+            } else {
+              handleOpenFullscreen();
+            }
+          }}
         >
           {vibe.media ? (
             <video
               ref={videoRef}
-              src={vibe.media}
+              src={vibe.media.includes("#t=") ? vibe.media : `${vibe.media}#t=0.1`}
+              poster={getVideoPosterUrl(vibe.media) || undefined}
               className="h-full w-full object-cover cursor-pointer"
               preload="metadata"
               loop

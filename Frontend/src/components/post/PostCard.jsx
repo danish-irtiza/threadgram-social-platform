@@ -3,11 +3,36 @@ import {
   Heart, MessageCircle, Bookmark, MoreHorizontal, Send,
   Trash2, Pencil, X, ChevronDown, ChevronUp, CornerDownRight,
   Film, Check, AlertCircle, Volume2, VolumeX, ChevronLeft, ChevronRight,
+  Loader2,
 } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { cn } from "@/lib/utils";
 import api from "@/api/axios";
 import { removePostFromProfile, updatePostInProfile } from "@/redux/features/profile/profileSlice.js";
+import { removeFeedPost } from "@/redux/features/feed/feedSlice.js";
+import { getVideoPosterUrl } from "@/utils/videoUtils.js";
+
+// ─── Audio Preference (localStorage) ──────────────────────────────────────────
+const AUDIO_PREF_KEY = "feed_video_audio_muted";
+
+function getStoredAudioMuted() {
+  try {
+    const val = localStorage.getItem(AUDIO_PREF_KEY);
+    if (val === "false") return false;
+    if (val === "true") return true;
+    return true; // default: muted on fresh visit
+  } catch {
+    return true;
+  }
+}
+
+function setStoredAudioMuted(muted) {
+  try {
+    localStorage.setItem(AUDIO_PREF_KEY, String(muted));
+  } catch {
+    // localStorage unavailable — silently ignore
+  }
+}
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 function formatCount(n) {
@@ -366,6 +391,7 @@ function DedicatedCommentsModal({ postId, post, commentsCount: initialCount, onC
   const [commentText, setCommentText] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
   const [toast, setToast] = useState(null);
+  const [isClosing, setIsClosing] = useState(false);
 
   const commentInputRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -373,6 +399,24 @@ function DedicatedCommentsModal({ postId, post, commentsCount: initialCount, onC
 
   const showToast = useCallback((message, type = "error") => setToast({ message, type }), []);
   const dismissToast = useCallback(() => setToast(null), []);
+
+  const handleAnimatedClose = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    setTimeout(() => {
+      onClose();
+    }, 180);
+  }, [isClosing, onClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        handleAnimatedClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleAnimatedClose]);
 
   // Lock background scrolling while comments modal is active
   useEffect(() => {
@@ -448,7 +492,7 @@ function DedicatedCommentsModal({ postId, post, commentsCount: initialCount, onC
     try {
       const { data } = await api.post(`/posts/${postId}/comment`, { comment: text });
       const createdComment = data.data.comment;
-      
+
       setComments((prev) => [createdComment, ...prev]);
       const newTotal = totalComments + 1;
       setTotalComments(newTotal);
@@ -481,9 +525,24 @@ function DedicatedCommentsModal({ postId, post, commentsCount: initialCount, onC
   const authorUsername = post?.author?.username;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-0 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200 select-none">
-      <div className="relative w-full h-full sm:h-[85vh] sm:max-w-lg rounded-none sm:rounded-2xl border-0 sm:border border-border/80 bg-paper shadow-xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-150">
-        
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          handleAnimatedClose();
+        }
+      }}
+      className={cn(
+        "fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-0 sm:p-4 backdrop-blur-sm select-none",
+        isClosing ? "animate-modal-fade-out" : "animate-modal-fade-in"
+      )}
+    >
+      <div
+        className={cn(
+          "relative w-full h-full sm:h-[85vh] sm:max-w-lg rounded-none sm:rounded-2xl border-0 sm:border border-border/80 bg-paper shadow-xl overflow-hidden flex flex-col",
+          isClosing ? "animate-modal-pop-out" : "animate-modal-pop-in"
+        )}
+      >
+
         {/* Header */}
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border/40 bg-surface/50 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -500,7 +559,7 @@ function DedicatedCommentsModal({ postId, post, commentsCount: initialCount, onC
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleAnimatedClose}
             className="grid h-8 w-8 place-items-center rounded-full text-muted hover:text-ink hover:bg-overlay cursor-pointer transition-colors"
             aria-label="Close comments"
           >
@@ -631,7 +690,7 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
   const [liked, setLiked] = useState(false);
   const [likesCount, setLikesCount] = useState(0);
   const [saved, setSaved] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => getStoredAudioMuted());
 
   const [commentText, setCommentText] = useState("");
   const [sendingComment, setSendingComment] = useState(false);
@@ -655,8 +714,10 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
       post.likesCount ?? (Array.isArray(post.like) ? post.like.length : 0)
     );
     setSaved(
-      Array.isArray(post.savedPost) && currentUserId &&
-      post.savedPost.some((id) => String(id?._id || id) === String(currentUserId))
+      post.isSaved ?? (
+        Array.isArray(post.savedPost) && currentUserId &&
+        post.savedPost.some((id) => String(id?._id || id) === String(currentUserId))
+      )
     );
     setCommentText("");
     setPostMenuOpen(false);
@@ -702,7 +763,11 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
     if (savingPost) return;
     setSavingPost(true);
     const prevSaved = saved; setSaved(!prevSaved);
-    try { const { data } = await api.post(`/posts/${post._id}/save`); setSaved(data.isSaved); }
+    try {
+      const { data } = await api.post(`/posts/${post._id}/save`);
+      setSaved(data.isSaved);
+      dispatch(updatePostInProfile({ _id: post._id, isSaved: data.isSaved }));
+    }
     catch { setSaved(prevSaved); showToast("Failed to update save."); }
     finally { setSavingPost(false); }
   };
@@ -753,7 +818,7 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-2 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200 select-none">
-      
+
       {/* Left Arrow Button */}
       {currentIndex > 0 && (
         <button
@@ -780,7 +845,7 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
 
       {/* Main Split Box (~60% width, 80% height) */}
       <div className="relative z-20 w-[95vw] md:w-[85vw] lg:w-[65vw] xl:w-[60vw] h-[85vh] md:h-[80vh] max-w-[1100px] rounded-2xl border border-border/80 bg-paper shadow-lg overflow-hidden flex flex-col md:flex-row animate-in zoom-in-95 duration-150">
-        
+
         {/* Left Side: Video / Image (~35-40% width) */}
         <div className="w-full md:w-[40%] lg:w-[38%] bg-black relative flex items-center justify-center overflow-hidden h-64 md:h-full shrink-0">
           {post?.media ? (
@@ -812,7 +877,11 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
           {post?.mediaType === "video" && (
             <button
               type="button"
-              onClick={() => setIsMuted((v) => !v)}
+              onClick={() => setIsMuted((v) => {
+                const next = !v;
+                setStoredAudioMuted(next);
+                return next;
+              })}
               className="absolute bottom-3 right-3 z-30 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 transition-colors border border-white/20 cursor-pointer"
               title={isMuted ? "Unmute" : "Mute"}
             >
@@ -823,7 +892,7 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
 
         {/* Right Side: Header + Comments + Actions + Comment Input (~60-65% width) */}
         <div className="w-full md:w-[60%] lg:w-[62%] flex flex-col h-full bg-paper min-w-0 border-l border-border/40">
-          
+
           {/* Header */}
           <div className="flex items-center justify-between gap-2 p-3.5 border-b border-border/40 shrink-0">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -999,10 +1068,25 @@ function FullscreenMediaModal({ postsList = [], initialIndex = 0, onClose }) {
 }
 
 // ─── PostCard (default export) ────────────────────────────────────────────────
-export default function PostCard({ post: initialPost, postsList, postIndex = 0, className, onDeleted }) {
+export default function PostCard({
+  post: initialPost,
+  postsList,
+  postIndex = 0,
+  className,
+  onDeleted,
+  onMediaClick,
+  isActiveVideo = false,
+  onRegisterVideoElement,
+}) {
   const currentUser = useSelector((s) => s.auth?.user);
   const currentUserId = currentUser?._id;
   const dispatch = useDispatch();
+
+  const videoRef = useRef(null);
+  const mediaContainerRef = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [autoplayFailed, setAutoplayFailed] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
 
   const [post] = useState(initialPost);
   const [commentsCount, setCommentsCount] = useState(() =>
@@ -1016,8 +1100,10 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
     initialPost?.likesCount ?? (Array.isArray(initialPost?.like) ? initialPost.like.length : 0)
   );
   const [saved, setSaved] = useState(() =>
-    Array.isArray(initialPost?.savedPost) && currentUserId &&
-    initialPost.savedPost.some((id) => String(id?._id || id) === String(currentUserId))
+    initialPost?.isSaved ?? (
+      Array.isArray(initialPost?.savedPost) && currentUserId &&
+      initialPost.savedPost.some((id) => String(id?._id || id) === String(currentUserId))
+    )
   );
 
   const [liking, setLiking] = useState(false);
@@ -1026,13 +1112,131 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
   const [deleting, setDeleting] = useState(false);
   const [postMenuOpen, setPostMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
-  
+
   const [fullscreenModal, setFullscreenModal] = useState(false);
   const [commentsModalOpen, setCommentsModalOpen] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(() => getStoredAudioMuted());
 
   const isOwner = currentUserId && post?.author &&
     String(post.author._id || post.author) === String(currentUserId);
+  const isVideo = post?.mediaType === "video";
+
+  // Register video container with feed IntersectionObserver
+  useEffect(() => {
+    if (!isVideo || !onRegisterVideoElement || !post?._id) return;
+    const el = mediaContainerRef.current;
+    if (el) {
+      onRegisterVideoElement(post._id, el);
+    }
+    return () => {
+      onRegisterVideoElement(post._id, null);
+    };
+  }, [isVideo, onRegisterVideoElement, post?._id]);
+
+  // Automatic playback control based on viewport visibility
+  useEffect(() => {
+    if (!isVideo) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (!isActiveVideo || fullscreenModal || commentsModalOpen || deleteModal) {
+      if (!video.paused) {
+        video.pause();
+      }
+      setIsPlaying(false);
+      return;
+    }
+
+    // Apply the persisted audio preference
+    video.muted = isMuted;
+
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          setIsPlaying(true);
+          setAutoplayFailed(false);
+        })
+        .catch((err) => {
+          if (err.name === "AbortError") {
+            setIsPlaying(false);
+            return;
+          }
+          // Browser blocked unmuted autoplay — fall back to muted
+          if (!video.muted) {
+            video.muted = true;
+            setIsMuted(true);
+            // Don't persist this fallback — it's not an explicit user choice
+            const retryPromise = video.play();
+            if (retryPromise !== undefined) {
+              retryPromise
+                .then(() => {
+                  setIsPlaying(true);
+                  setAutoplayFailed(false);
+                })
+                .catch(() => {
+                  setAutoplayFailed(true);
+                  setIsPlaying(false);
+                });
+            }
+          } else {
+            setAutoplayFailed(true);
+            setIsPlaying(false);
+          }
+        });
+    }
+  }, [isActiveVideo, isVideo, fullscreenModal, commentsModalOpen, deleteModal, isMuted]);
+
+  // Keep DOM muted property synchronized with isMuted state
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.muted = isMuted;
+    }
+  }, [isMuted]);
+
+  // Pause video cleanly on unmount to prevent memory leaks / orphaned audio
+  useEffect(() => {
+    return () => {
+      if (videoRef.current && !videoRef.current.paused) {
+        videoRef.current.pause();
+      }
+    };
+  }, []);
+
+  // Listen for native video events
+  useEffect(() => {
+    if (!isVideo) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => {
+      setIsPlaying(true);
+      setAutoplayFailed(false);
+    };
+    const handlePause = () => {
+      setIsPlaying(false);
+    };
+    const handleWaiting = () => {
+      setIsBuffering(true);
+    };
+    const handlePlaying = () => {
+      setIsBuffering(false);
+      setIsPlaying(true);
+      setAutoplayFailed(false);
+    };
+
+    video.addEventListener("play", handlePlay);
+    video.addEventListener("pause", handlePause);
+    video.addEventListener("waiting", handleWaiting);
+    video.addEventListener("playing", handlePlaying);
+
+    return () => {
+      video.removeEventListener("play", handlePlay);
+      video.removeEventListener("pause", handlePause);
+      video.removeEventListener("waiting", handleWaiting);
+      video.removeEventListener("playing", handlePlaying);
+    };
+  }, [isVideo]);
 
   const showToast = useCallback((message, type = "error") => setToast({ message, type }), []);
   const dismissToast = useCallback(() => setToast(null), []);
@@ -1055,7 +1259,11 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
     if (savingPost) return;
     setSavingPost(true);
     const prevSaved = saved; setSaved(!prevSaved);
-    try { const { data } = await api.post(`/posts/${post._id}/save`); setSaved(data.isSaved); }
+    try {
+      const { data } = await api.post(`/posts/${post._id}/save`);
+      setSaved(data.isSaved);
+      dispatch(updatePostInProfile({ _id: post._id, isSaved: data.isSaved }));
+    }
     catch { setSaved(prevSaved); showToast("Failed to update save."); }
     finally { setSavingPost(false); }
   };
@@ -1065,6 +1273,7 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
     try {
       await api.delete(`/posts/${post._id}`);
       dispatch(removePostFromProfile(post._id));
+      dispatch(removeFeedPost(post._id));
       setDeleteModal(false);
       if (onDeleted) onDeleted(post._id);
     } catch (e) { showToast(e?.response?.data?.message || "Failed to delete post."); setDeleting(false); }
@@ -1117,13 +1326,57 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
 
         {/* Media (Clicking opens Fullscreen Modal) */}
         <div
-          className="relative w-full bg-surface-elevated overflow-hidden cursor-pointer"
+          ref={mediaContainerRef}
+          data-video-post-id={isVideo ? post?._id : undefined}
+          className="relative w-full bg-surface-elevated overflow-hidden cursor-pointer group"
           style={{ aspectRatio: "1/1" }}
-          onClick={() => setFullscreenModal(true)}
+          onClick={() => {
+            if (onMediaClick) {
+              onMediaClick();
+            } else {
+              setFullscreenModal(true);
+            }
+          }}
         >
           {post?.media ? (
-            post?.mediaType === "video" ? (
-              <video src={post.media} className="h-full w-full object-cover cursor-pointer" preload="metadata" loop muted={isMuted} playsInline />
+            isVideo ? (
+              <>
+                <video
+                  ref={videoRef}
+                  src={post.media.includes("#t=") ? post.media : `${post.media}#t=0.1`}
+                  poster={getVideoPosterUrl(post.media) || undefined}
+                  className="h-full w-full object-cover cursor-pointer"
+                  preload="metadata"
+                  loop
+                  muted={isMuted}
+                  playsInline
+                />
+
+                {/* Buffering Indicator */}
+                {isBuffering && isPlaying && (
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-black/20 z-10">
+                    <Loader2 size={32} className="animate-spin text-white drop-shadow-md" />
+                  </div>
+                )}
+
+                {/* Mute/Unmute toggle */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsMuted((v) => {
+                      const next = !v;
+                      setStoredAudioMuted(next);
+                      return next;
+                    });
+                  }}
+                  className="absolute bottom-2 right-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 cursor-pointer transition-colors z-10"
+                  title={isMuted ? "Unmute" : "Mute"}
+                  aria-label={isMuted ? "Unmute" : "Mute"}
+                >
+                  {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                </button>
+              </>
             ) : (
               <img src={post.media} alt={post?.caption || "Post"} loading="lazy" draggable={false}
                 className="h-full w-full object-cover cursor-pointer" />
@@ -1132,21 +1385,6 @@ export default function PostCard({ post: initialPost, postsList, postIndex = 0, 
             <div className="h-full w-full flex items-center justify-center text-muted bg-gradient-to-br from-indigo-soft to-surface-elevated">
               <Film size={32} strokeWidth={1.5} />
             </div>
-          )}
-
-          {/* Mute/Unmute toggle for normal card video */}
-          {post?.mediaType === "video" && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsMuted((v) => !v);
-              }}
-              className="absolute bottom-2 right-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-white backdrop-blur-sm hover:bg-black/80 cursor-pointer transition-colors z-10"
-              title={isMuted ? "Unmute" : "Mute"}
-            >
-              {isMuted ? <VolumeX size={12} /> : <Volume2 size={12} />}
-            </button>
           )}
         </div>
 
