@@ -1,11 +1,18 @@
 import React, { useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Mail, Hexagon, Loader2, ArrowLeft, CheckCircle2, Inbox, KeyRound } from "lucide-react";
+import { Mail, Loader2, ArrowLeft, CheckCircle2, Inbox, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { designSystem } from "@doc/designSystem";
+import { useTheme } from "@/context/ThemeContext.jsx";
+import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
+import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
 import api from "../../api/axios.js";
 
 const ForgetPassword = () => {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  const iconCircle = isDark ? darkIconCircle : lightIconCircle;
+
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [sentEmail, setSentEmail] = useState("");
@@ -260,7 +267,7 @@ const ForgetPassword = () => {
                 {isResending ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                 
+
                   </>
                 ) : resendCooldown > 0 ? (
                   <span>
@@ -358,15 +365,20 @@ const ForgetPassword = () => {
       style={{ fontFamily: fontFamily.sans }}
     >
       <div className="w-full max-w-[360px] flex flex-col gap-6">
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-1">
           <div
             className={cn(
-              "flex items-center justify-center w-12 h-12 border border-border",
-              "bg-surface-elevated"
+              "flex items-center justify-center w-12 h-12 rounded-xl border border-border-subtle p-1.5",
+              "bg-surface-elevated overflow-hidden"
             )}
-            style={{ borderRadius: radius.md, boxShadow: shadow.sm }}
+            style={{ borderRadius: radius.md }}
           >
-            <Hexagon className="w-6 h-6 text-indigo fill-indigo/20" />
+            <img
+              src={iconCircle}
+              alt="Threadgram"
+              className="h-full w-full object-contain select-none "
+              draggable={false}
+            />
           </div>
           <div className="flex flex-col items-center gap-1 text-center">
             <h1

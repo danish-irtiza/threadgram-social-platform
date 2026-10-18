@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useSelector, useDispatch } from "react-redux";
 import { addPostToProfile, addVibeToProfile } from "@/redux/features/profile/profileSlice.js";
+import { addCreatedStoryToFeed } from "@/redux/features/story/storySlice.js";
 import api from "@/api/axios";
 import { getVideoDuration, MAX_VIBE_DURATION } from "@/utils/videoUtils";
 import VideoTrimmer from "@/components/ui/VideoTrimmer";
@@ -128,11 +129,12 @@ export default function CreateContentModal({
         try {
           const duration = await getVideoDuration(selectedFile);
           if (duration > MAX_VIBE_DURATION) {
-            setError("Vibe video duration cannot exceed 60 seconds");
+            setError("Vibe video duration cannot exceed 60 seconds. Please trim your video.");
             setStep(1.5);
             return;
           } else {
             setError(null);
+            setStep(1);
           }
         } catch (err) {
           console.warn("Could not check video duration on type toggle:", err);
@@ -150,7 +152,7 @@ export default function CreateContentModal({
     const isImg = file.type.startsWith("image/");
 
     if (contentType === "vibe" && !isVid) {
-      setError("Only short video files are allowed for Vibes.");
+      setError("Only video files are allowed for Vibes.");
       return;
     }
 
@@ -159,24 +161,26 @@ export default function CreateContentModal({
       return;
     }
 
+    setSelectedFile(file);
+
     // If Vibe & video, check duration BEFORE setting preview step
     if (contentType === "vibe" && isVid) {
       try {
         const duration = await getVideoDuration(file);
         if (duration > MAX_VIBE_DURATION) {
-          setSelectedFile(file);
-          setError("Vibe video duration cannot exceed 60 seconds");
+          setError("Vibe video duration cannot exceed 60 seconds. Please trim your video.");
           setStep(1.5);
           return;
         } else {
           setError(null);
+          setStep(1);
+          return;
         }
       } catch (err) {
         console.warn("Could not read video duration automatically:", err);
       }
     }
 
-    setSelectedFile(file);
     setStep(1);
   };
 
@@ -280,6 +284,10 @@ export default function CreateContentModal({
         console.log(`[Publish ${contentType} Flow 7/7] Dispatching addVibeToProfile.`);
         dispatch(addVibeToProfile(res.data.data.vibe));
       }
+      if (contentType === "story" && res.data?.data?.story) {
+        console.log(`[Publish ${contentType} Flow 7/7] Dispatching addCreatedStoryToFeed.`);
+        dispatch(addCreatedStoryToFeed(res.data.data.story));
+      }
 
       setTimeout(() => {
         if (onCreatedSuccess) onCreatedSuccess(res.data);
@@ -314,7 +322,7 @@ export default function CreateContentModal({
                 type="button"
                 onClick={() => {
                   setError(null);
-                  setStep(step === 2 && isVideo && contentType === "vibe" ? 1.5 : 1);
+                  setStep(step === 1.5 ? 1 : 1);
                 }}
                 className="grid h-9 w-9 place-items-center rounded-full text-ink hover:bg-surface-elevated transition-colors"
                 aria-label="Back"
@@ -457,7 +465,7 @@ export default function CreateContentModal({
                     <button
                       type="button"
                       onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                      className="rounded-xl border border-border bg-paper px-4 py-2 text-xs font-semibold text-ink hover:bg-surface-elevated transition-colors"
+                      className="rounded-xl bg-white hover:bg-surface-elevated text-[#C62828] border-2 border-[#C62828] px-4 py-2 text-xs font-black shadow-sm transition-all active:scale-[0.98] cursor-pointer"
                     >
                       Change Media
                     </button>
@@ -477,7 +485,7 @@ export default function CreateContentModal({
                         onClick={() => setStep(1.5)}
                         className="rounded-xl border border-indigo/40 bg-indigo-soft/40 px-4 py-2 text-xs font-semibold text-indigo hover:bg-indigo-soft/80 transition-colors"
                       >
-                        Trim Video
+                        Edit Vibe
                       </button>
                     )}
 
@@ -494,11 +502,11 @@ export default function CreateContentModal({
             </div>
           )}
 
-          {/* STEP 1.5: TRIM VIDEO (VIBE ONLY) */}
+          {/* STEP 1.5: TRIM / EDIT VIDEO (VIBE ONLY) */}
           {step === 1.5 && selectedFile && isVideo && (
             <div className="flex flex-1 flex-col items-center justify-center">
               <h3 className="mb-2 text-sm font-semibold text-ink">
-                Trim Video Clip (Max 60 seconds)
+                Edit Vibe (Trim Video Clip)
               </h3>
               <VideoTrimmer
                 file={selectedFile}

@@ -48,7 +48,7 @@ export default function LeftCornerNav({
                   type="button"
                   onClick={() => onChange && onChange(id)}
                   className={cn(
-                    "group relative flex w-full flex-col items-center justify-center gap-1 rounded-2xl px-2 py-3 transition-all duration-120 ease-out active:scale-[0.96]",
+                    "group relative flex w-full flex-col items-center justify-center gap-1 rounded-2xl px-2 py-3 cursor-pointer transition-all duration-120 ease-out active:scale-[0.96]",
                     active
                       ? "text-indigo bg-indigo-soft/60"
                       : "text-text-subtle hover:text-ink hover:bg-overlay"
@@ -110,7 +110,7 @@ export default function LeftCornerNav({
                 type="button"
                 onClick={() => onChange && onChange(id)}
                 className={cn(
-                  "group relative flex h-16 flex-col items-center justify-center gap-1 rounded-xl transition-all duration-120 ease-out active:scale-[0.96] touch-manipulation min-h-[56px]",
+                  "group relative flex h-16 flex-col items-center justify-center gap-1 rounded-xl cursor-pointer transition-all duration-120 ease-out active:scale-[0.96] touch-manipulation min-h-[56px]",
                   active
                     ? "text-indigo"
                     : "text-text-subtle hover:text-ink hover:bg-overlay"

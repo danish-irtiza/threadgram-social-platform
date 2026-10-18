@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { isAuth, optionalAuth } = require("../middlewares/isAuth");
-const upload = require("../middlewares/multer");
+const { upload, handleMulterError } = require("../middlewares/multer");
 const {
   createVibe,
   editVibe,
@@ -38,7 +38,7 @@ router.get("/:vibeId", isAuth, getVibeById);
 
 // ─── Vibe CRUD ─────────────────────────────────────────────────────────────────
 // Create vibe (video upload)
-router.post("/", isAuth, upload.single("media"), createVibe);
+router.post("/", isAuth, upload.single("media"), handleMulterError, createVibe);
 
 // Edit vibe caption
 router.put("/:vibeId", isAuth, editVibe);

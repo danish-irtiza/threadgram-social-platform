@@ -32,10 +32,10 @@ export const getVideoDuration = (file) => {
       resolve(isFinite(dur) && dur > 0 ? dur : 0);
     };
 
-    // Safety fallback timer (1.5s max) to ensure promise never hangs
+    // Safety fallback timer (2s max) to ensure promise never hangs
     const timer = setTimeout(() => {
       finish(video.duration);
-    }, 1500);
+    }, 2000);
 
     const checkDuration = () => {
       let dur = video.duration;
@@ -66,8 +66,9 @@ export const getVideoDuration = (file) => {
 };
 
 /**
- * Client-side video trimming using Canvas and MediaRecorder.
- * Trims the given video file between startTime and endTime and returns a new trimmed File object.
+ * Client-side video trimming using Canvas, Web Audio API, and MediaRecorder.
+ * Trims the given video file between startTime and endTime and returns a new trimmed File object
+ * with audio preserved and guaranteed non-blocking execution.
  * 
  * @param {File} sourceFile 
  * @param {number} startTime in seconds
@@ -76,7 +77,7 @@ export const getVideoDuration = (file) => {
  * @returns {Promise<File>} Trimmed Video File
  */
 export const trimVideoFile = (sourceFile, startTime, endTime, onProgress) => {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!sourceFile) return reject(new Error("No video file provided"));
     if (startTime >= endTime) return reject(new Error("Start time must be less than end time"));
 
@@ -86,8 +87,9 @@ export const trimVideoFile = (sourceFile, startTime, endTime, onProgress) => {
     }
 
     const video = document.createElement("video");
-    video.muted = true;
+    video.muted = true; // MUST remain true so browsers never block play() via Autoplay policy!
     video.playsInline = true;
+
     const objectUrl = URL.createObjectURL(sourceFile);
     video.src = objectUrl;
 
@@ -97,47 +99,123 @@ export const trimVideoFile = (sourceFile, startTime, endTime, onProgress) => {
     let mediaRecorder = null;
     const recordedChunks = [];
     let animationFrameId = null;
+    let safetyCheckInterval = null;
+    let maxTimeoutGuard = null;
+    let audioContext = null;
+    let audioBufferSource = null;
+    let isFinished = false;
 
     const cleanup = () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (safetyCheckInterval) clearInterval(safetyCheckInterval);
+      if (maxTimeoutGuard) clearTimeout(maxTimeoutGuard);
+
+      if (audioBufferSource) {
+        try {
+          audioBufferSource.stop();
+          audioBufferSource.disconnect();
+        } catch (e) {}
+      }
+
+      if (audioContext && audioContext.state !== "closed") {
+        audioContext.close().catch(() => {});
+      }
+
       URL.revokeObjectURL(objectUrl);
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
 
-    video.onloadedmetadata = () => {
-      canvas.width = video.videoWidth || 720;
-      canvas.height = video.videoHeight || 1280;
-      video.currentTime = startTime;
+    const stopRecording = () => {
+      if (isFinished) return;
+      isFinished = true;
+
+      if (audioBufferSource) {
+        try {
+          audioBufferSource.stop();
+        } catch (e) {}
+      }
+
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        try {
+          mediaRecorder.stop();
+        } catch (e) {
+          console.warn("Error stopping MediaRecorder:", e);
+        }
+      }
     };
 
-    video.onseeked = () => {
-      if (mediaRecorder) return; // Already started recording
+    video.onloadedmetadata = async () => {
+      canvas.width = video.videoWidth || 720;
+      canvas.height = video.videoHeight || 1280;
 
-      // Setup MediaRecorder
-      const stream = canvas.captureStream(30); // 30 FPS
+      // Setup Canvas Video Stream
+      const canvasStream = canvas.captureStream(30); // 30 FPS
+      const compositeStream = new MediaStream();
 
-      // Select mimeType supported by browser
-      let mimeType = "video/webm;codecs=vp9";
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = "video/webm;codecs=vp8";
+      canvasStream.getVideoTracks().forEach((track) => compositeStream.addTrack(track));
+
+      // Decode Audio directly from file ArrayBuffer via Web Audio API for 100% audio fidelity & no autoplay blocks
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          audioContext = new AudioContextClass();
+          if (audioContext.state === "suspended") {
+            await audioContext.resume().catch(() => {});
+          }
+
+          const arrayBuffer = await sourceFile.arrayBuffer();
+          const decodeAudio = (ctx, buf) =>
+            new Promise((res, rej) => {
+              const r = ctx.decodeAudioData(buf, res, rej);
+              if (r && typeof r.then === "function") r.then(res).catch(rej);
+            });
+
+          const audioBuffer = await decodeAudio(audioContext, arrayBuffer);
+          if (audioBuffer && audioBuffer.numberOfChannels > 0) {
+            const bufferSource = audioContext.createBufferSource();
+            bufferSource.buffer = audioBuffer;
+            const audioDest = audioContext.createMediaStreamDestination();
+            bufferSource.connect(audioDest);
+
+            audioDest.stream.getAudioTracks().forEach((track) => compositeStream.addTrack(track));
+            audioBufferSource = bufferSource;
+          }
+        }
+      } catch (audioErr) {
+        console.warn("Audio extraction note (file may be silent or audio decode unsupported):", audioErr);
+        if (typeof video.captureStream === "function") {
+          try {
+            const vStream = video.captureStream();
+            vStream.getAudioTracks().forEach((t) => compositeStream.addTrack(t));
+          } catch (e) {}
+        }
       }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = "video/webm";
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = "video/mp4";
+
+      // Determine best supported MIME type
+      const preferredTypes = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm;codecs=h264,opus",
+        "video/webm",
+        "video/mp4;codecs=avc1,mp4a",
+        "video/mp4",
+      ];
+      let selectedMimeType = "";
+      for (const type of preferredTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          selectedMimeType = type;
+          break;
+        }
       }
 
       try {
-        mediaRecorder = new MediaRecorder(stream, {
-          mimeType,
-          videoBitsPerSecond: 2500000, // 2.5 Mbps
-        });
+        mediaRecorder = selectedMimeType
+          ? new MediaRecorder(compositeStream, { mimeType: selectedMimeType, videoBitsPerSecond: 3000000 })
+          : new MediaRecorder(compositeStream);
       } catch (err) {
-        // Fallback without options
-        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder = new MediaRecorder(compositeStream);
       }
 
       mediaRecorder.ondataavailable = (event) => {
@@ -148,44 +226,107 @@ export const trimVideoFile = (sourceFile, startTime, endTime, onProgress) => {
 
       mediaRecorder.onstop = () => {
         cleanup();
-        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || "video/mp4" });
-        const trimmedFileName = sourceFile.name.replace(/\.[^/.]+$/, "") + `_trimmed_${Math.round(startTime)}-${Math.round(endTime)}.mp4`;
+        const mime = mediaRecorder.mimeType || selectedMimeType || "video/mp4";
+        const blob = new Blob(recordedChunks, { type: mime });
+        const ext = mime.includes("webm") ? ".webm" : ".mp4";
+        const baseName = sourceFile.name.replace(/\.[^/.]+$/, "");
+        const trimmedFileName = `${baseName}_trimmed_${Math.round(startTime)}-${Math.round(endTime)}${ext}`;
         const trimmedFile = new File([blob], trimmedFileName, { type: blob.type || "video/mp4" });
         resolve(trimmedFile);
       };
 
-      // Start recording & playback
-      mediaRecorder.start(100);
-      video.play().catch(reject);
+      // Seek to startTime & start recording
+      video.currentTime = startTime;
 
-      const drawFrame = () => {
-        if (video.paused || video.ended) return;
+      let hasStarted = false;
+      const startRecordingProcess = () => {
+        if (hasStarted) return;
+        hasStarted = true;
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const currentRecordedTime = video.currentTime - startTime;
-        if (onProgress) {
-          const progressPercent = Math.min(100, Math.round((currentRecordedTime / durationToRecord) * 100));
-          onProgress(progressPercent);
+        try {
+          mediaRecorder.start(100);
+        } catch (recErr) {
+          cleanup();
+          return reject(recErr);
         }
 
-        if (video.currentTime >= endTime) {
-          video.pause();
-          if (mediaRecorder && mediaRecorder.state !== "inactive") {
-            mediaRecorder.stop();
+        if (audioBufferSource) {
+          try {
+            audioBufferSource.start(0, startTime, durationToRecord);
+          } catch (aErr) {
+            console.warn("AudioBufferSource start note:", aErr);
           }
-          return;
         }
 
-        animationFrameId = requestAnimationFrame(drawFrame);
+        video.play().catch((err) => {
+          console.warn("Video play warning during trim:", err);
+        });
+
+        // Frame rendering loop via requestAnimationFrame
+        const drawFrame = () => {
+          if (isFinished) return;
+
+          if (video.readyState >= 2) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          }
+
+          const currentRecordedTime = video.currentTime - startTime;
+          if (onProgress && durationToRecord > 0) {
+            const progressPercent = Math.min(100, Math.max(0, Math.round((currentRecordedTime / durationToRecord) * 100)));
+            onProgress(progressPercent);
+          }
+
+          if (video.currentTime >= endTime - 0.05 || video.ended) {
+            video.pause();
+            stopRecording();
+            return;
+          }
+
+          animationFrameId = requestAnimationFrame(drawFrame);
+        };
+
+        drawFrame();
+
+        // Backup safety interval check every 100ms (handles tab switching or rAF throttling)
+        safetyCheckInterval = setInterval(() => {
+          if (isFinished) return;
+
+          const currentRecordedTime = video.currentTime - startTime;
+          if (onProgress && durationToRecord > 0) {
+            const progressPercent = Math.min(100, Math.max(0, Math.round((currentRecordedTime / durationToRecord) * 100)));
+            onProgress(progressPercent);
+          }
+
+          if (video.currentTime >= endTime - 0.05 || video.ended) {
+            video.pause();
+            stopRecording();
+          }
+        }, 100);
+
+        // Maximum timeout guard (duration + 5 seconds buffer)
+        maxTimeoutGuard = setTimeout(() => {
+          if (!isFinished) {
+            console.warn("Trim recording reached max timeout guard. Stopping cleanly.");
+            video.pause();
+            stopRecording();
+          }
+        }, (durationToRecord + 5) * 1000);
       };
 
-      drawFrame();
+      // Trigger start on seeked or immediately if position matches
+      video.onseeked = startRecordingProcess;
+
+      // Fallback check if seeked event doesn't fire (e.g. startTime is 0)
+      setTimeout(() => {
+        if (!hasStarted) {
+          startRecordingProcess();
+        }
+      }, 250);
     };
 
     video.onerror = (err) => {
       cleanup();
-      reject(new Error("Error loading video for trimming"));
+      reject(new Error("Failed to load video file for trimming."));
     };
   });
 };

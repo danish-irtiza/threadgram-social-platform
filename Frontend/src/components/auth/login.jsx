@@ -6,12 +6,14 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Hexagon,
   Loader2,
   CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { designSystem } from "@doc/designSystem";
+import { useTheme } from "@/context/ThemeContext.jsx";
+import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
+import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks.js";
 import {
   login,
@@ -20,6 +22,10 @@ import {
 } from "../../redux/features/auth/authSlice.js";
 
 const Login = () => {
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  const iconCircle = isDark ? darkIconCircle : lightIconCircle;
+
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useAppDispatch();
@@ -89,7 +95,7 @@ const Login = () => {
       dispatch(resetAuthState());
     };
   }, [dispatch]);
-const isEmailInput = /\S+@\S+\.\S+/.test(identifier);
+  const isEmailInput = /\S+@\S+\.\S+/.test(identifier);
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLocalError("");
@@ -142,15 +148,20 @@ const isEmailInput = /\S+@\S+\.\S+/.test(identifier);
       style={{ fontFamily: fontFamily.sans }}
     >
       <div className="w-full max-w-[360px] flex flex-col gap-6">
-        <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-col items-center gap-1">
           <div
             className={cn(
-              "flex items-center justify-center w-12 h-12 rounded-md border border-border",
-              "bg-surface-elevated shadow-sm"
+              "flex items-center justify-center w-12 h-12 rounded-xl border border-border-subtle p-1.5",
+              "bg-surface-elevated overflow-hidden"
             )}
             style={{ borderRadius: radius.md }}
           >
-            <Hexagon className="w-6 h-6 text-indigo fill-indigo/20" />
+            <img
+              src={iconCircle}
+              alt="Threadgram"
+              className="h-full w-full object-contain select-none "
+              draggable={false}
+            />
           </div>
           <div className="flex flex-col items-center gap-1 text-center">
             <h2

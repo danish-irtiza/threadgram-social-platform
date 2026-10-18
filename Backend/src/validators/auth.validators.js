@@ -88,10 +88,15 @@ const editProfileSchema = z
       .refine((v) => typeof v === "undefined" || typeof v === "boolean", {
         message: "isPrivate must be a boolean",
       }),
-  })
-  .strict()
-  .refine((data) => Object.keys(data).length > 0, {
-    message: "At least one field is required to update the profile",
+    removeAvatar: z
+      .union([z.boolean(), z.string()])
+      .optional()
+      .transform((v) => {
+        if (typeof v === "boolean") return v
+        if (v === "true") return true
+        if (v === "false") return false
+        return v
+      }),
   })
 
 module.exports = {

@@ -88,7 +88,8 @@ const createVibe = async (req, res) => {
 
     // Validate video MIME type (video only)
     const mime = file.mimetype || "";
-    if (!mime.startsWith("video/")) {
+    const videoExtPattern = /\.(mp4|mov|avi|mkv|webm|m4v|3gp|wmv|flv)$/i;
+    if (!mime.startsWith("video/") && !videoExtPattern.test(file.originalname || "")) {
       return res.status(400).json({
         status: "fail",
         message: "Only short video files (max 60 seconds) are allowed for Vibes",

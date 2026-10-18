@@ -446,19 +446,33 @@ const editProfile = async (req, res) => {
       })
     }
 
-    const validated = editProfileSchema.safeParse(req.body)
-    if (!validated.success) {
-      const errors = extractValidationErrors(validated.error)
-      const firstKey = Object.keys(errors)[0]
-      const firstMsg = firstKey ? errors[firstKey] : "Validation failed"
+    // If only a file was uploaded with no text fields, body may be empty — skip body validation
+    const hasBodyFields = Object.keys(req.body).some(
+      (k) => ["name", "username", "bio", "gender", "isPrivate", "removeAvatar"].includes(k)
+    )
+
+    let validatedData = {}
+    if (hasBodyFields) {
+      const validated = editProfileSchema.safeParse(req.body)
+      if (!validated.success) {
+        const errors = extractValidationErrors(validated.error)
+        const firstKey = Object.keys(errors)[0]
+        const firstMsg = firstKey ? errors[firstKey] : "Validation failed"
+        return res.status(400).json({
+          status: "fail",
+          message: firstMsg,
+          errors,
+        })
+      }
+      validatedData = validated.data
+    } else if (!req.file) {
       return res.status(400).json({
         status: "fail",
-        message: firstMsg,
-        errors,
+        message: "At least one field or a file is required to update the profile",
       })
     }
 
-    const { name, username, bio, gender, isPrivate } = validated.data
+    const { name, username, bio, gender, isPrivate, removeAvatar } = validatedData
 
     const user = await User.findById(currentUserId)
     if (!user) {
@@ -504,7 +518,9 @@ const editProfile = async (req, res) => {
       user.isPrivate = isPrivate
     }
 
-    if (req.file) {
+    if (removeAvatar) {
+      user.avatar = ""
+    } else if (req.file) {
       const avatarUrl = await uploadOnCloudinary(req.file.path)
       if (avatarUrl) {
         user.avatar = avatarUrl

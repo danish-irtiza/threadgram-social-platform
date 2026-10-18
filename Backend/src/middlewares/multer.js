@@ -17,16 +17,25 @@ const storage = multer.diskStorage({
         cb(null, safeName);
     },
 });
-
 const fileFilter = (req, file, cb) => {
-    const allowed = /^(image|video)\//;
-    if (allowed.test(file.mimetype)) {
+    const allowedMime = /^(image|video)\//;
+
+    const allowedExtensions =
+        /\.(jpg|jpeg|png|webp|gif|mp4|mov|webm)$/i;
+    const isValidMime = allowedMime.test(file.mimetype);
+    const isValidExtension = allowedExtensions.test(file.originalname);
+
+    if (isValidMime && isValidExtension) {
+        cb(null, true);
+    } else if (
+        file.mimetype === "application/octet-stream" &&
+        isValidExtension
+    ) {
         cb(null, true);
     } else {
-        cb(new Error('Only image and video files are allowed'), false);
+        cb(new Error("Only image and video files are allowed"), false);
     }
 };
-
 // 500 MB limit for video uploads before Cloudinary transcoding
 const upload = multer({
     storage,

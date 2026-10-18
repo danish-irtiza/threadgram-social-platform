@@ -18,6 +18,7 @@ import {
   UserMinus,
   ChevronDown,
 } from "lucide-react";
+import StoryViewerModal from "@components/story/StoryViewerModal.jsx";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { cn } from "@/lib/utils.js";
@@ -43,11 +44,14 @@ import MobileTopNav from "@components/navigation/MobileTopNav.jsx";
 import SettingsPanel from "@/components/settings/SettingsPanel.jsx";
 import { useCreateModal } from "@/context/CreateModalContext.jsx";
 import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
+import darkIconCircle from "@/assets/logo/thread-icon-circle-darkmode-removebg-preview.png";
 import PostCard from "@/components/post/PostCard.jsx";
 import VibeCard from "@/components/post/VibeCard.jsx";
 import AuthPromptModal from "@/components/model/AuthPromptModal.jsx";
 import UnfollowConfirmModal from "@/components/model/UnfollowConfirmModal.jsx";
 import Button from "@/components/ui/Button.jsx";
+import { fetchUserStories, openStoryViewer } from "@/redux/features/story/storySlice.js";
+import ProfileAvatarOptionsModal from "@/components/story/ProfileAvatarOptionsModal.jsx";
 
 /**
  * FollowPill — pill button using reusable Button component.
@@ -344,12 +348,12 @@ function formatCount(n) {
 const DESKTOP_TABS = [
   { id: "posts", label: "Posts", Icon: Grid3x3, countKey: "postCount" },
   { id: "photos", label: "Photos", Icon: Grid3x3, countKey: "photosCount" },
-  { id: "videos", label: "Videos", Icon: Film, countKey: "videosCount" },
+  { id: "vibes", label: "Vibes", Icon: Film, countKey: "videosCount" },
 ];
 
 const MOBILE_TABS = [
   { id: "posts", label: "Posts", Icon: Grid3x3 },
-  { id: "videos", label: "Videos", Icon: Film },
+  { id: "vibes", label: "Vibes", Icon: Film },
 ];
 
 
@@ -384,6 +388,9 @@ export default function ProfilePage() {
   const [rejectLoading, setRejectLoading] = useState(false);
   const [listActionLoadingUserId, setListActionLoadingUserId] = useState(null);
 
+  const [isAvatarOptionsOpen, setIsAvatarOptionsOpen] = useState(false);
+  const userStoriesData = useSelector((s) => s.story?.userStories || {});
+
   useEffect(() => {
     const hasToken = Boolean(accessToken);
     if (isMe && !hasToken) {
@@ -404,6 +411,35 @@ export default function ProfilePage() {
       // no-op, profile key handled in redux
     };
   }, [isMe, username, accessToken, dispatch, navigate]);
+
+  useEffect(() => {
+    if (profile?._id) {
+      dispatch(fetchUserStories(profile._id));
+    }
+  }, [dispatch, profile?._id]);
+
+  const targetUserStoryObj = profile?._id ? userStoriesData[profile._id] : null;
+  const targetUserStories = targetUserStoryObj?.stories || [];
+  const hasActiveStory = targetUserStories.length > 0;
+  const hasUnseenStory = targetUserStories.some((s) => !s.isViewed);
+
+  // Derived ownership flags — declared BEFORE handleAvatarClick to avoid TDZ
+  const isOwner = !!profile?.isOwner;
+  const postsRestricted = !!profile?.postsRestricted;
+
+  const handleAvatarClick = useCallback(() => {
+    if (isOwner) {
+      setIsAvatarOptionsOpen(true);
+    } else if (hasActiveStory) {
+      dispatch(
+        openStoryViewer({
+          groups: [{ user: profile, stories: targetUserStories }],
+          groupIndex: 0,
+          storyIndex: 0,
+        })
+      );
+    }
+  }, [isOwner, hasActiveStory, dispatch, profile, targetUserStories]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -428,30 +464,32 @@ export default function ProfilePage() {
     if (desktopTab === "photos") {
       return all.filter((p) => p?.mediaType === "image");
     }
-    if (desktopTab === "videos") {
-      return all.filter((p) => p?.mediaType === "video");
+    if (desktopTab === "vibes") {
+      // Vibes are fetched separately from the vibes API, not from profile.posts
+      return [];
     }
     return all;
   }, [profile, desktopTab]);
 
   const mobileVisiblePosts = useMemo(() => {
     const all = Array.isArray(profile?.posts) ? profile.posts : [];
-    if (mobileTab === "videos") {
-      return all.filter((p) => p?.mediaType === "video");
+    if (mobileTab === "vibes") {
+      // Vibes are fetched separately
+      return [];
     }
-    return all.filter((p) => p?.mediaType === "image" || !p?.mediaType);
+    return all;
   }, [profile, mobileTab]);
 
-  // When the Videos (Vibes) tab is activated, lazy-fetch vibes for this profile
+  // When the Vibes tab is activated, lazy-fetch vibes for this profile
   useEffect(() => {
-    if ((desktopTab === "videos" || mobileTab === "videos") && profile?._id) {
+    if ((desktopTab === "vibes" || mobileTab === "vibes") && profile?._id) {
       dispatch(fetchUserVibes(profile._id));
     }
   }, [desktopTab, mobileTab, profile?._id, dispatch]);
 
   const tabCount = (tabId) => {
     if (!profile) return 0;
-    if (tabId === "videos") {
+    if (tabId === "vibes") {
       if (Array.isArray(vibes) && vibes.length > 0) {
         return vibes.length;
       }
@@ -516,8 +554,7 @@ export default function ProfilePage() {
     return "idle";
   }, [profile]);
 
-  const isOwner = !!profile?.isOwner;
-  const postsRestricted = !!profile?.postsRestricted;
+  // isOwner and postsRestricted are declared earlier (before handleAvatarClick)
 
   const handleFollowToggle = useCallback(async () => {
     if (!accessToken) {
@@ -790,15 +827,17 @@ export default function ProfilePage() {
           <div className="hidden lg:block relative z-10 px-6 pt-4 pb-6">
             <div className="flex items-start justify-between gap-6">
               <div className="flex items-start gap-6 flex-1 min-w-0">
-                <Avatar
-                  src={profile?.avatar || iconCircle}
-                  size={120}
-                  ringed
-                  className={cn(
-                    "shadow-[0_0_0_3px_rgba(107,91,255,0.12)]",
-                    isLoading && "opacity-70"
-                  )}
-                />
+                <div onClick={handleAvatarClick} className="cursor-pointer">
+                  <Avatar
+                    src={profile?.avatar || iconCircle}
+                    size={120}
+                    ringed={hasUnseenStory}
+                    className={cn(
+                      "shadow-[0_0_0_3px_rgba(107,91,255,0.12)]",
+                      isLoading && "opacity-70"
+                    )}
+                  />
+                </div>
                 <div className="flex-1 min-w-0 pt-2">
                   {isLoading ? (
                     <div className="space-y-3">
@@ -985,11 +1024,13 @@ export default function ProfilePage() {
             ) : notFound ? null : isError ? null : profile ? (
               <>
                 <div className="flex items-start gap-4 pt-2">
-                  <Avatar
-                    src={profile.avatar || iconCircle}
-                    size={92}
-                    ringed
-                  />
+                  <div onClick={handleAvatarClick} className="cursor-pointer">
+                    <Avatar
+                      src={profile.avatar || iconCircle}
+                      size={92}
+                      ringed={hasUnseenStory}
+                    />
+                  </div>
                   <div className="flex-1 min-w-0 pt-1 grid grid-cols-3 gap-2 text-center">
                     {[
                       { k: "postCount", label: "Posts", onClick: () => setMobileTab("posts") },
@@ -1275,7 +1316,7 @@ export default function ProfilePage() {
                       : handleFollowToggle
                 }
               />
-            ) : (desktopTab === "videos" || mobileTab === "videos") ? (
+            ) : (desktopTab === "vibes" || mobileTab === "vibes") ? (
               vibesLoading ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
                   <Skeleton className="h-72 w-full rounded-2xl" />
@@ -1486,6 +1527,25 @@ export default function ProfilePage() {
         onClose={() => setAuthPromptOpen(false)}
         targetUser={profile}
       />
+
+      {/* Reusable Profile Avatar Options Modal */}
+      <ProfileAvatarOptionsModal
+        isOpen={isAvatarOptionsOpen}
+        onClose={() => setIsAvatarOptionsOpen(false)}
+        hasActiveStory={hasActiveStory}
+        onViewStory={() =>
+          dispatch(
+            openStoryViewer({
+              groups: [{ user: profile, stories: targetUserStories }],
+              groupIndex: 0,
+              storyIndex: 0,
+            })
+          )
+        }
+      />
+
+      {/* Story Viewer Modal */}
+      <StoryViewerModal />
     </div>
   );
 }

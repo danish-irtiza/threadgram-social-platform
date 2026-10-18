@@ -237,7 +237,7 @@ export default function VibeCard({ vibe: initialVibe, vibesList, vibeIndex = 0 }
             <video
               ref={videoRef}
               src={vibe.media}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover cursor-pointer"
               preload="metadata"
               loop
               muted={isMuted}

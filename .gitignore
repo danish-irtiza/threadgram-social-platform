@@ -1,15 +1,47 @@
+# Environment variables
 .env
 .env.*
-!env.sample
+!.env.sample
+
+# Dependencies
 node_modules/
-.trae
-.agent
-.vscode
+
+# AI / Agent tools
+.trae/
+.agent/
+
+# Logs
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # Build
 dist/
 build/
+dist-ssr/
 
 # Cache
 .cache/
+
+# Local environment files
+*.local
+
+# Editor directories and files
+.vscode/
+!.vscode/extensions.json
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Visual Studio
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

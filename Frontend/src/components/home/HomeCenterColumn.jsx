@@ -1,28 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bookmark,
   MessageCircle,
   Heart,
-  MoreHorizontal,
   Music2,
   Volume2,
-  Plus,
 } from "lucide-react";
+import { useSelector, useDispatch } from "react-redux";
 import { cn } from "@/lib/utils.js";
 import SearchInput from "@ui/SearchInput.jsx";
 import { Avatar, FollowPill } from "./HomeLeftSidebar.jsx";
 import lightIconCircle from "@/assets/logo/thread-icon-circle-lightmode-removebg-preview.png";
-import ReelsFeed from "@/components/reels/ReelsFeed.jsx";
-
-const CENTER_DEMO_STORIES = [
-  { id: "you", label: "Your Story", isYou: true, hasNew: false, avatar: lightIconCircle },
-  { id: "st1", label: "aditya123", hasNew: true, avatar: lightIconCircle },
-  { id: "st2", label: "theayushsahu_", hasNew: true, avatar: lightIconCircle },
-  { id: "st3", label: "thegopalsahu_", hasNew: true, avatar: lightIconCircle },
-  { id: "st4", label: "priya.exe", hasNew: false, avatar: lightIconCircle },
-  { id: "st5", label: "nikhil.01", hasNew: true, avatar: lightIconCircle },
-  { id: "st6", label: "sneha.r", hasNew: false, avatar: lightIconCircle },
-];
+import VibesFeed from "../vibes/VibeFeed.jsx";
+import StoryAvatarRing from "../story/StoryAvatarRing.jsx";
+import { fetchFeedStories, openStoryViewer } from "@/redux/features/story/storySlice.js";
+import StoryViewerModal from "../story/StoryViewerModal.jsx";
 
 const CENTER_DEMO_POSTS = [
   {
@@ -39,47 +31,6 @@ const CENTER_DEMO_POSTS = [
     mediaLabel: "grid • red vignette",
   },
 ];
-
-function StoryRing({ story, onClick, size = 60 }) {
-  const s = typeof size === "number" ? `${size}px` : size;
-  return (
-    <button
-      type="button"
-      onClick={() => onClick && onClick(story)}
-      className="group cursor-pointer flex shrink-0 flex-col items-center gap-1.5 focus:outline-none"
-      aria-label={`${story.label}${story.hasNew ? " • New story" : ""}`}
-    >
-      <div
-        className={cn(
-          "relative grid shrink-0 place-items-center rounded-full p-[2px] transition-transform duration-120 ease-out active:scale-[0.96]",
-          story.isYou
-            ? "bg-surface-elevated ring-1 ring-border"
-            : story.hasNew
-            ? "bg-gradient-to-br from-indigo via-pink to-yellow"
-            : "bg-surface-elevated ring-1 ring-border opacity-80"
-        )}
-        style={{ width: s, height: s }}
-      >
-        <div className="h-full w-full rounded-full bg-paper p-[2px]">
-          <Avatar src={story.avatar} size="100%" />
-        </div>
-        {story.isYou && (
-          <span className="absolute -bottom-0.5 -right-0.5 grid h-5 w-5 place-items-center rounded-full border-2 border-paper bg-indigo text-white shadow-[0_4px_14px_rgba(0,0,0,0.45)]">
-            <Plus size={12} strokeWidth={2.5} />
-          </span>
-        )}
-      </div>
-      <span
-        className={cn(
-          "max-w-[68px] truncate text-[11px] leading-4",
-          story.hasNew ? "text-ink font-medium" : "text-text-subtle"
-        )}
-      >
-        {story.label}
-      </span>
-    </button>
-  );
-}
 
 function PostCard({ post, onLike, onFollow, className }) {
   const [liked, setLiked] = useState(false);
@@ -100,13 +51,6 @@ function PostCard({ post, onLike, onFollow, className }) {
           </p>
         </div>
         <FollowPill state={post.followState} onClick={() => onFollow && onFollow(post)} />
-        {/* <button
-          type="button"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-text-subtle transition-colors duration-120 ease-out hover:bg-overlay-hover hover:text-ink"
-          aria-label="More options"
-        >
-          <MoreHorizontal size={18} strokeWidth={2} />
-        </button> */}
       </header>
 
       <div className="relative bg-surface-elevated">
@@ -159,10 +103,10 @@ function PostCard({ post, onLike, onFollow, className }) {
               fill={liked ? "currentColor" : "none"}
             />
           </button>
-           <span className="text-[13px] text-ink select-none">
+          <span className="text-[13px] text-ink select-none">
             <b className="font-semibold">{liked ? post.likes + 1 : post.likes}</b>
-             </span>
-          
+          </span>
+
           <button
             type="button"
             className="grid h-9 w-9 place-items-center rounded-full text-ink transition-colors duration-120 ease-out hover:bg-overlay-hover cursor-pointer"
@@ -170,7 +114,7 @@ function PostCard({ post, onLike, onFollow, className }) {
           >
             <MessageCircle size={20} strokeWidth={2} />
           </button>
-          <div className="h-6  bg-border " />
+          <div className="h-6 bg-border" />
           <span className="text-[13px] text-ink select-none">
             <b className="font-semibold">{post.comments}</b>
           </span>
@@ -181,7 +125,7 @@ function PostCard({ post, onLike, onFollow, className }) {
             aria-label="Save post"
             className={cn(
               "ml-auto grid h-10 w-10 place-items-center rounded-full transition-all duration-120 ease-out hover:bg-overlay-hover",
-              saved ? "text-ink" : 'text-subtle'
+              saved ? "text-ink" : "text-subtle"
             )}
           >
             <Bookmark
@@ -202,7 +146,6 @@ function PostCard({ post, onLike, onFollow, className }) {
 }
 
 export default function HomeCenterColumn({
-  stories = CENTER_DEMO_STORIES,
   posts = CENTER_DEMO_POSTS,
   initialTab = "home",
   activeTab: propActiveTab,
@@ -210,12 +153,54 @@ export default function HomeCenterColumn({
   onOpenCreate,
   className,
 }) {
+  const dispatch = useDispatch();
   const [internalTab, setInternalTab] = useState(initialTab);
   const activeTab = propActiveTab !== undefined ? propActiveTab : internalTab;
+  const [searchValue, setSearchValue] = useState("");
 
-  const setTab = (id) => {
-    setInternalTab(id);
-    onTabChange && onTabChange(id);
+  const currentUser = useSelector((s) => s.auth?.user);
+  const currentUserId = currentUser?._id;
+  const feedStoryGroups = useSelector((s) => s.story?.feedStoryGroups || []);
+
+  useEffect(() => {
+    dispatch(fetchFeedStories());
+  }, [dispatch]);
+
+  // Determine logged in user's story group
+  const myStoryGroupIndex = feedStoryGroups.findIndex(
+    (g) => currentUserId && String(g.user?._id) === String(currentUserId)
+  );
+  const myStoryGroup = myStoryGroupIndex >= 0 ? feedStoryGroups[myStoryGroupIndex] : null;
+  const hasMyStory = Boolean(myStoryGroup && myStoryGroup.stories?.length > 0);
+  // Compute hasUnseen from isViewed flags (backend doesn't set hasUnseen for own stories)
+  const myStoryHasUnseen = hasMyStory && myStoryGroup.stories.some((s) => !s.isViewed);
+
+  const handleMyStoryAvatarClick = () => {
+    if (hasMyStory) {
+      dispatch(
+        openStoryViewer({
+          groups: feedStoryGroups,
+          groupIndex: myStoryGroupIndex,
+          storyIndex: 0,
+        })
+      );
+    } else {
+      onOpenCreate && onOpenCreate("story");
+    }
+  };
+
+  const handleMyStoryPlusClick = () => {
+    onOpenCreate && onOpenCreate("story");
+  };
+
+  const handleOtherStoryClick = (groupIndex) => {
+    dispatch(
+      openStoryViewer({
+        groups: feedStoryGroups,
+        groupIndex,
+        storyIndex: 0,
+      })
+    );
   };
 
   return (
@@ -225,9 +210,12 @@ export default function HomeCenterColumn({
         className
       )}
     >
+      {/* Story Viewer Modal */}
+      <StoryViewerModal />
+
       {activeTab === "reels" ? (
         <div className="relative flex h-full w-full min-h-0 min-w-0">
-          <ReelsFeed />
+          <VibesFeed />
         </div>
       ) : (
         <div className="mx-auto flex w-full max-w-[720px] min-w-0 flex-1 flex-col">
@@ -239,20 +227,52 @@ export default function HomeCenterColumn({
           >
             {activeTab === "home" && (
               <>
+                {/* Story Feed Bar */}
                 <div className="-mx-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <div className="flex items-start gap-4 px-1 pb-1 pt-1">
-                    {stories.map((s) => (
-                      <StoryRing
-                        key={s.id}
-                        story={s}
+                    {/* Your Story */}
+                    <div className="flex flex-col items-center gap-1.5 shrink-0">
+                      <StoryAvatarRing
+                        src={currentUser?.avatar || lightIconCircle}
                         size={64}
-                        onClick={(story) => {
-                          if (story.isYou && onOpenCreate) {
-                            onOpenCreate("story");
-                          }
-                        }}
+                        hasActiveStory={hasMyStory}
+                        hasUnseen={myStoryHasUnseen}
+                        isYou={true}
+                        showPlusBadge={true}
+                        onClick={handleMyStoryAvatarClick}
+                        onPlusClick={handleMyStoryPlusClick}
+                        fallbackLetter={currentUser?.name || currentUser?.username || "U"}
                       />
-                    ))}
+                      <span className="max-w-[68px] truncate text-[11px] font-medium leading-4 text-ink">
+                        Your Story
+                      </span>
+                    </div>
+
+                    {/* Other Users' Stories */}
+                    {feedStoryGroups.map((group, idx) => {
+                      if (myStoryGroupIndex >= 0 && idx === myStoryGroupIndex) return null;
+
+                      return (
+                        <div key={group.user?._id || idx} className="flex flex-col items-center gap-1.5 shrink-0">
+                          <StoryAvatarRing
+                            src={group.user?.avatar}
+                            size={64}
+                            hasActiveStory={true}
+                            hasUnseen={group.hasUnseen}
+                            onClick={() => handleOtherStoryClick(idx)}
+                            fallbackLetter={group.user?.name || group.user?.username || "U"}
+                          />
+                          <span
+                            className={cn(
+                              "max-w-[68px] truncate text-[11px] leading-4",
+                              group.hasUnseen ? "text-ink font-medium" : "text-text-subtle"
+                            )}
+                          >
+                            @{group.user?.username || "user"}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -260,7 +280,6 @@ export default function HomeCenterColumn({
                   {posts.map((p) => (
                     <PostCard key={p.id} post={p} />
                   ))}
-                 
                 </div>
               </>
             )}
@@ -317,4 +336,4 @@ export default function HomeCenterColumn({
   );
 }
 
-export { StoryRing, PostCard, CENTER_DEMO_STORIES, CENTER_DEMO_POSTS };
+export { PostCard, CENTER_DEMO_POSTS };

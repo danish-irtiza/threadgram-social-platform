@@ -257,7 +257,7 @@ export default function HomeLeftSidebar({ className }) {
             type="button"
             onClick={toggleTheme}
             className={cn(
-              "grid h-9 w-9 shrink-0 place-items-center rounded-xl text-text-subtle transition-all duration-120 ease-out hover:bg-overlay-hover hover:text-ink"
+              "grid h-9 w-9 shrink-0 place-items-center rounded-xl text-text-subtle transition-all duration-120 ease-out hover:bg-overlay-hover hover:text-ink cursor-pointer"
             )}
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             title={isDark ? "Light mode" : "Dark mode"}
@@ -267,7 +267,7 @@ export default function HomeLeftSidebar({ className }) {
           <button
             type="button"
             className={cn(
-              "relative grid h-9 w-9 shrink-0 place-items-center rounded-xl text-text-subtle transition-all duration-120 ease-out hover:bg-overlay-hover hover:text-ink"
+              "relative grid h-9 w-9 shrink-0 place-items-center rounded-xl text-text-subtle transition-all duration-120 ease-out hover:bg-overlay-hover hover:text-ink cursor-pointer"
             )}
             aria-label="Notifications"
           >
